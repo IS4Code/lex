@@ -23,32 +23,6 @@
 #include "lex.h"
 #include <cctype>
 
-
-template struct pg::lex::basic_match_result< char >;
-template struct pg::lex::basic_match_result< wchar_t >;
-#if defined( __cpp_lib_char8_t )
-template struct pg::lex::basic_match_result< char8_t >;
-#endif
-template struct pg::lex::basic_match_result< char16_t >;
-template struct pg::lex::basic_match_result< char32_t >;
-
-template struct pg::lex::detail::string_context< char >;
-template struct pg::lex::detail::string_context< wchar_t >;
-#if defined( __cpp_lib_char8_t )
-template struct pg::lex::detail::string_context< char8_t >;
-#endif
-template struct pg::lex::detail::string_context< char16_t >;
-template struct pg::lex::detail::string_context< char32_t >;
-
-template struct pg::lex::pattern< char >;
-template struct pg::lex::pattern< wchar_t >;
-#if defined( __cpp_lib_char8_t )
-template struct pg::lex::pattern< char8_t >;
-#endif
-template struct pg::lex::pattern< char16_t >;
-template struct pg::lex::pattern< char32_t >;
-
-
 static const char * lex_error_text( pg::lex::error_type code ) noexcept
 {
     switch( code )

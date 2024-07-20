@@ -34,6 +34,7 @@
 #include <utility>
 #include <type_traits>
 #include <memory>
+#include <iterator>
 
 #ifdef __has_cpp_attribute
 # if __has_cpp_attribute( unlikely )
@@ -70,27 +71,26 @@ namespace lex
 namespace detail
 {
 
-template< typename T >                                      struct string_traits               { static constexpr bool is_string = false; };
-template<>                                                  struct string_traits< char * >     { static constexpr bool is_string = true; using char_type = char; };
-template<>                                                  struct string_traits< wchar_t * >  { static constexpr bool is_string = true; using char_type = wchar_t; };
-#if defined( __cpp_lib_char8_t )
-template<>                                                  struct string_traits< char8_t * >  { static constexpr bool is_string = true; using char_type = char8_t; };
-#endif
-template<>                                                  struct string_traits< char16_t * > { static constexpr bool is_string = true; using char_type = char16_t; };
-template<>                                                  struct string_traits< char32_t * > { static constexpr bool is_string = true; using char_type = char32_t;};
-template< typename T, typename Traits, typename Allocater > struct string_traits< std::basic_string< T, Traits, Allocater > > : string_traits< T * > {};
-#if defined( __cpp_lib_string_view )
-template< typename T, typename Traits >                     struct string_traits< std::basic_string_view< T, Traits > >       : string_traits< T * > {};
-#endif
-template< typename T >                                      struct string_traits< const T >                                   : string_traits< T >   {};
-template< typename T >                                      struct string_traits< const T * >                                 : string_traits< T * > {};
-template< typename T >                                      struct string_traits< T [] >                                      : string_traits< T * > {};
-template< typename T >                                      struct string_traits< const T [] >                                : string_traits< T * > {};
-template< typename T, size_t N >                            struct string_traits< T [ N ] >                                   : string_traits< T * > {};
-template< typename T, size_t N >                            struct string_traits< const T [ N ] >                             : string_traits< T * > {};
-template< typename T >                                      struct string_traits< T & >                                       : string_traits< T >   {};
-template< typename T >                                      struct string_traits< T && >                                      : string_traits< T >   {};
+template< typename T >
+struct string_traits
+{
+	using char_type = typename std::iterator_traits<decltype(std::begin(std::declval<typename std::remove_cv<T>::type>()))>::value_type;
+};
 
+template< typename T >
+struct string_traits< T * >
+{
+	using char_type = typename std::remove_cv<T>::type;
+};
+
+template< typename T >
+struct string_traits< T & > : string_traits< T > {};
+
+template< typename T >
+struct string_traits< T && > : string_traits< T > {};
+
+template< typename T >
+using char_type = typename string_traits< T >::char_type;
 
 template< typename, typename >
 struct match_state;
@@ -312,13 +312,12 @@ public:
      */
     PG_LEX_NODISCARD operator bool() const noexcept { return level > 0; }
 
-#if defined( __cpp_lib_string_view )
     /**
      * \brief Returns a std::string_view of the requested capture.
      *
      * This function throws a 'capture_out_of_range' when match result doesn't have a capture at the requested index.
      */
-    PG_LEX_NODISCARD std::basic_string_view< CharT > at( size_t i ) const
+    PG_LEX_NODISCARD auto at( size_t i ) const
     {
         if( static_cast< int >( i ) >= level ) PG_LEX_UNLIKELY
         {
@@ -327,7 +326,6 @@ public:
 
         return captures[ i ];
     }
-#endif
 
     /**
      * \brief Returns a pair of indices that tells the position of the match in the string.
@@ -343,14 +341,6 @@ public:
      */
     PG_LEX_NODISCARD size_t length() const noexcept { return pos.second - pos.first; }
 };
-
-extern template struct basic_match_result< char >;
-extern template struct basic_match_result< wchar_t >;
-#if defined( __cpp_lib_char8_t )
-extern template struct basic_match_result< char8_t >;
-#endif
-extern template struct basic_match_result< char16_t >;
-extern template struct basic_match_result< char32_t >;
 
 using match_result    = basic_match_result< char >;
 using wmatch_result   = basic_match_result< wchar_t >;
@@ -813,15 +803,6 @@ struct string_context
     const CharT * const end   = nullptr;
 };
 
-extern template struct string_context< char >;
-extern template struct string_context< wchar_t >;
-#if defined( __cpp_lib_char8_t )
-extern template struct string_context< char8_t >;
-#endif
-extern template struct string_context< char16_t >;
-extern template struct string_context< char32_t >;
-
-
 template< typename CharT >
 auto find_bracket_class_end( const CharT * p, const CharT * ep )
 {
@@ -995,15 +976,6 @@ struct pattern
     const CharT * const begin  = nullptr;
 };
 
-extern template struct pattern< char >;
-extern template struct pattern< wchar_t >;
-#if defined( __cpp_lib_char8_t )
-extern template struct pattern< char8_t >;
-#endif
-extern template struct pattern< char16_t >;
-extern template struct pattern< char32_t >;
-
-
 /**
  * \brief A lex gmatch_context is an input string combined with a pattern.
  *
@@ -1051,12 +1023,12 @@ struct gmatch_context
 #if defined( __cpp_deduction_guides )
 template< typename StrT, typename PatT >
 gmatch_context( StrT &&, PatT && ) noexcept ->
-gmatch_context< typename detail::string_traits< StrT >::char_type,
-                typename detail::string_traits< PatT >::char_type >;
+gmatch_context< detail::char_type< StrT >,
+                detail::char_type< PatT > >;
 
 template< typename StrT, typename PatCharT >
 gmatch_context( StrT &&, const pattern< PatCharT > & ) noexcept ->
-gmatch_context< typename detail::string_traits< StrT >::char_type, PatCharT >;
+gmatch_context< detail::char_type< StrT >, PatCharT >;
 #endif
 
 /**
@@ -1198,9 +1170,9 @@ PG_LEX_NODISCARD auto gmatch( StrT && str, PatT && pat ) noexcept
  * \return Returns a match result based on the character type of the input string.
  */
 template< typename StrT, typename PatCharT >
-PG_LEX_NODISCARD auto match( StrT && str, const pattern< PatCharT > & pat )
+PG_LEX_NODISCARD auto match_pat( StrT && str, const pattern< PatCharT > & pat )
 {
-    using str_char_type = typename detail::string_traits< StrT >::char_type;
+    using str_char_type = detail::char_type< StrT >;
 
     basic_match_result< str_char_type > mr;
     const auto                          c   = gmatch( std::forward< StrT >( str ), pat );
@@ -1232,13 +1204,12 @@ PG_LEX_NODISCARD auto match( StrT && str, const pattern< PatCharT > & pat )
     return mr;
 }
 
-template< typename StrT, typename PatT,
-          typename detail::string_traits< PatT >::char_type = 0 >  // Terminate recursion of PatT
+template< typename StrT, typename PatT >
 PG_LEX_NODISCARD auto match( StrT && str, PatT && pat )
 {
-    using PatCharT = typename detail::string_traits< PatT >::char_type;
+    using PatCharT = detail::char_type< PatT >;
 
-    return match( std::forward< StrT >( str ), pattern< PatCharT >( pat ) );
+    return match_pat( std::forward< StrT >( str ), pattern< PatCharT >( pat ) );
 }
 
 /**
@@ -1251,14 +1222,11 @@ PG_LEX_NODISCARD auto match( StrT && str, PatT && pat )
  *
  * \return Returns a std::string based on the character type of the input string.
  */
-template< typename StrT, typename PatCharT, typename ReplT,
-          typename std::enable_if< detail::string_traits< ReplT >::is_string, int >::type = 0 >
-PG_LEX_NODISCARD auto gsub( StrT && str, const pattern< PatCharT > & pat, ReplT && repl, int count = -1 )
+template< typename StrT, typename PatCharT, typename ReplT >
+	PG_LEX_NODISCARD auto gsub_pat(StrT && str, const pattern< PatCharT > & pat, ReplT && repl, int count = -1)
 {
-    static_assert( detail::string_traits< ReplT >::is_string, "Replacement pattern is not one of the supported string-like types!" );
-
-    using str_char_type  = typename detail::string_traits< StrT >::char_type;
-    using repl_char_type = typename detail::string_traits< ReplT >::char_type;
+    using str_char_type  = detail::char_type< StrT >;
+    using repl_char_type = detail::char_type< ReplT >;
     using iterator_type  = gmatch_iterator< str_char_type, PatCharT >;
 
     const detail::string_context< repl_char_type > r            = { std::forward< ReplT >( repl ) };
@@ -1332,14 +1300,12 @@ PG_LEX_NODISCARD auto gsub( StrT && str, const pattern< PatCharT > & pat, ReplT 
     return result;
 }
 
-template< typename StrT, typename PatT, typename ReplT,
-          typename std::enable_if< detail::string_traits< ReplT >::is_string, int >::type = 0,
-          typename detail::string_traits< PatT >::char_type = 0 >  // Terminate recursion of PatT
+template< typename StrT, typename PatT, typename ReplT >
 PG_LEX_NODISCARD auto gsub( StrT&& str, PatT && pat, ReplT && repl, int count = -1 )
 {
-    using PatCharT = typename detail::string_traits< PatT >::char_type;
+    using PatCharT = detail::char_type< PatT >;
 
-    return gsub( std::forward< StrT >( str ), pattern< PatCharT >( pat ), std::forward< ReplT >( repl ), count );
+    return gsub_pat( std::forward< StrT >( str ), pattern< PatCharT >( pat ), std::forward< ReplT >( repl ), count );
 }
 
 /**
@@ -1352,11 +1318,10 @@ PG_LEX_NODISCARD auto gsub( StrT&& str, PatT && pat, ReplT && repl, int count = 
  *
  * \return Returns a std::string based on the character type of the input string.
  */
-template< typename StrT, typename PatCharT, typename Function,
-          typename std::enable_if< !detail::string_traits< Function >::is_string, int >::type = 0 >
-PG_LEX_NODISCARD auto gsub( StrT && str, const pattern< PatCharT > & pat, Function && func, int count = -1 )
+template< typename StrT, typename PatCharT, typename Function >
+PG_LEX_NODISCARD auto gsub_pat_func( StrT && str, const pattern< PatCharT > & pat, Function && func, int count = -1 )
 {
-    using str_char_type = typename detail::string_traits< StrT >::char_type;
+    using str_char_type = detail::char_type< StrT >;
     using iterator_type = gmatch_iterator< str_char_type, PatCharT >;
 
     const auto c            = gmatch( std::forward< StrT >( str ), pat );
@@ -1385,14 +1350,12 @@ PG_LEX_NODISCARD auto gsub( StrT && str, const pattern< PatCharT > & pat, Functi
     return result;
 }
 
-template< typename StrT, typename PatT, typename Function,
-          typename std::enable_if< !detail::string_traits< Function >::is_string, int >::type = 0,
-          typename detail::string_traits< PatT >::char_type = 0 >  // Terminate recursion of PatT
-PG_LEX_NODISCARD auto gsub( StrT && str, PatT && pat, Function && func, int count = -1 )
+template< typename StrT, typename PatT, typename Function >
+PG_LEX_NODISCARD auto gsub_func( StrT && str, PatT && pat, Function && func, int count = -1 )
 {
-    using PatCharT = typename detail::string_traits< PatT >::char_type;
+    using PatCharT = detail::char_type< PatT >;
 
-    return gsub( std::forward< StrT >( str ), pattern< PatCharT >( pat ), std::forward< Function >( func ), count );
+    return gsub_pat_func( std::forward< StrT >( str ), pattern< PatCharT >( pat ), std::forward< Function >( func ), count );
 }
 
 }
