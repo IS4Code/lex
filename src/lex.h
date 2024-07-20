@@ -1,4 +1,4 @@
-// MIT License
+﻿// MIT License
 //
 // Copyright (c) 2020 PG1003
 // Copyright (C) 1994-2020 Lua.org, PUC-Rio.
@@ -37,6 +37,7 @@
 #include <iterator>
 #include <tuple>
 #include <cctype>
+#include <array>
 
 #ifdef __has_cpp_attribute
 # if __has_cpp_attribute(unlikely)
@@ -106,125 +107,169 @@ namespace pg
 			using char_type = typename string_traits<T>::char_type;
 
 			template <typename, typename>
-			struct match_state;
+			struct match_state_iter;
 
-			template <typename CharT>
-			struct capture
+			template <typename Iter>
+			struct capture_iter : public std::pair<Iter, Iter>
 			{
-				const CharT * init() const noexcept { assert(begin_ptr); return begin_ptr; }
-				void init(const CharT * i) noexcept { assert(i); begin_ptr = i; }
+				using iterator = Iter;
+				using value_type = typename std::iterator_traits<Iter>::value_type;
+				using difference_type = typename std::iterator_traits<Iter>::difference_type;
+				using string_type = std::basic_string<value_type>;
 
-				int len() const noexcept { assert(length >= 0); return length; }
-				void len(int l) noexcept { assert(l >= 0); length = l; }
-
-				void mark_unfinished() noexcept { length = cap_state::unfinished; }
-				void mark_position() noexcept { length = cap_state::position; }
-				bool is_unfinished() const noexcept { return length == cap_state::unfinished; }
-
-				const CharT *begin() const noexcept { return init(); }
-				const CharT *end() const noexcept { return init() + len(); }
-
-#if defined(__cpp_lib_string_view)
-				operator std::basic_string_view<CharT>() const noexcept
+				Iter init() const noexcept(std::is_nothrow_move_constructible<Iter>::value)
 				{
-					assert(!is_unfinished());
-					return {begin_ptr, static_cast<size_t>(std::max(length, 0))};
+					assert(matched);
+					return first;
 				}
-#endif
+
+				void init(Iter i) noexcept(std::is_nothrow_copy_assignable<Iter>::value)
+				{
+					first = i;
+				}
+
+				difference_type len() const
+				{
+					return second - first;
+				}
+
+				void len(difference_type l)
+				{
+					assert(l >= 0);
+					second = first + l;
+				}
+
+				void mark_unfinished() noexcept
+				{
+					matched = false;
+				}
+
+				void mark_position() noexcept
+				{
+					matched = true;
+				}
+
+				bool is_unfinished() const noexcept
+				{
+					return matched;
+				}
+
+				Iter begin() const noexcept(std::is_nothrow_move_constructible<Iter>::value)
+				{
+					return first;
+				}
+
+				Iter end() const noexcept(std::is_nothrow_move_constructible<Iter>::value)
+				{
+					return second;
+				}
+
 #if defined(PG_LEX_TESTS)
-				operator std::basic_string<CharT>() const
+				operator string_type() const
 				{
 					assert(!is_unfinished());
-					return {begin_ptr, static_cast<size_t>(std::max(length, 0))};
+					return {first, second};
 				}
 
-				bool operator ==(const std::basic_string<CharT> &str) const
+				bool operator==(const string_type &str) const
 				{
-					return static_cast<std::basic_string<CharT>>(*this) == str;
+					return static_cast<string_type>(*this) == str;
 				}
 
-				const CharT * data() const noexcept { return init(); }
+				Iter data() const noexcept { return init(); }
 				std::size_t size() const noexcept { return len(); }
 #endif
 
-			private:
-				enum cap_state : int
-				{
-					unfinished = -1,
-					position = -2
-				};
-
-				const CharT * begin_ptr = nullptr;
-				int length = cap_state::unfinished;
+				bool matched = false;
 			};
 
-			template <typename CharT>
-			struct captures
+			template <typename Iter>
+			struct captures_iter
 			{
-				captures() noexcept = default;
+				using char_type = typename std::iterator_traits<Iter>::value_type;
+				using string_type = typename std::basic_string<char_type>;
 
-				captures(const captures & other) noexcept
+				captures_iter() noexcept = default;
+
+				captures_iter(const captures_iter &other) noexcept(std::is_nothrow_copy_assignable<Iter>::value)
 				{
 					operator=(other);
 				}
 
-				captures(captures && other) noexcept
-					: local{ other.local[0], other.local[1] }
+				captures_iter(captures_iter &&other) noexcept(std::is_nothrow_move_constructible<Iter>::value)
+					: local(std::move(other.local))
 					, alloc(std::move(other.alloc))
 				{}
 
-				captures & operator=(const captures & other) noexcept
+				captures_iter &operator=(const captures_iter &other) noexcept(std::is_nothrow_copy_assignable<Iter>::value)
 				{
 					if(other.alloc)
 					{
-						alloc = std::unique_ptr<capture<CharT>[]>(new capture<CharT>[MAXCAPTURES]);
-						std::copy(other.alloc.get(), other.alloc.get() + MAXCAPTURES, alloc.get());
+						alloc = std::make_unique<std::array<capture_iter<Iter>, MAXCAPTURES>>(*other.alloc);
+						local = {};
 					}
 					else
 					{
-						std::copy(other.local, other.local + max_local, local);
+						alloc = {};
+						local = other.local;
 					}
 
 					return *this;
 				}
 
-				capture<CharT> & operator[](std::size_t idx) noexcept
+				captures_iter &operator=(captures_iter &&other) noexcept(std::is_nothrow_move_assignable<Iter>::value)
+				{
+					if(other.alloc)
+					{
+						alloc = std::move(other.alloc);
+						local = {};
+					}
+					else
+					{
+						alloc = {};
+						local = std::move(other.local);
+					}
+
+					return *this;
+				}
+
+				capture_iter<Iter> &operator[](std::size_t idx) noexcept
 				{
 					if(alloc)
 					{
-						return alloc[idx];
+						return (*alloc)[idx];
 					}
 					else if(idx >= max_local)
 					{
-						alloc = std::unique_ptr<capture<CharT>[]>(new capture<CharT>[MAXCAPTURES]);
-						std::copy(local, local + max_local, alloc.get());
-						return alloc[idx];
+						alloc = std::make_unique<std::array<capture_iter<Iter>, MAXCAPTURES>>();
+						std::copy(local.begin(), local.end(), alloc->begin());
+						return (*alloc)[idx];
 					}
 
 					return local[idx];
 				}
 
-				const capture<CharT> & operator[](std::size_t idx) const noexcept
+				const capture_iter<Iter> &operator[](std::size_t idx) const noexcept
 				{
-					return alloc ? alloc[idx] : local[idx];
+					return alloc ? (*alloc)[idx] : local[idx];
 				}
 
-				const capture<CharT> * data() const noexcept
+				const capture_iter<Iter> *data() const noexcept
 				{
-					return alloc ? alloc.get() : local;
+					return &(*this)[0];
 				}
 
 			private:
 				static constexpr int max_local = 2;
-				capture<CharT> local[max_local];
-				std::unique_ptr<capture<CharT>[]> alloc;
+				std::array<capture_iter<Iter>, max_local> local;
+				std::unique_ptr<std::array<capture_iter<Iter>, MAXCAPTURES>> alloc;
 
 				static_assert(MAXCAPTURES > max_local, "MAXCAPTURES must be greater than 2");
 			};
 		}
 
 		template <typename>
-		struct basic_match_result;
+		struct basic_match_result_iter;
 
 		enum error_type : int
 		{
@@ -246,97 +291,80 @@ namespace pg
 			const error_type error_code;
 
 		public:
-			lex_error(const std::string &) = delete;
-			lex_error(const char *) = delete;
+			lex_error(const std::string&) = delete;
+			lex_error(const char*) = delete;
 
 			lex_error(pg::lex::error_type ec) noexcept;
-			PG_LEX_NODISCARD error_type code() const noexcept { return error_code; }
+
+			PG_LEX_NODISCARD error_type code() const noexcept
+			{
+				return error_code;
+			}
 		};
 
 		/**
 		 * \brief The base template for a match result
-		 *
-		 * \tparam CharT The character type of the match result.
 		 */
-		template <typename CharT>
-		struct basic_match_result
+		template <typename Iter>
+		struct basic_match_result_iter
 		{
+			using value_type = detail::capture_iter<Iter>;
+			using const_reference = const value_type&;
+			using reference = value_type&;
+			using const_iterator = const detail::capture_iter<Iter>*;
+			using iterator = const_iterator;
+			using difference_type = typename std::iterator_traits<Iter>::difference_type;
+			using char_type = typename std::iterator_traits<Iter>::value_type;
+			using string_type = typename std::basic_string<char_type>;
+
 		private:
 			template <typename, typename>
-			friend struct detail::match_state;
+			friend struct detail::match_state_iter;
 
-			std::pair<int, int> pos = { -1, -1 }; // The indices where the match starts and ends
+			std::pair<difference_type, difference_type> pos = { -1, -1 }; // The indices where the match starts and ends
 			int level = 0; // Total number of captures (finished or unfinished)
-			detail::captures<CharT> captures;
+			detail::captures_iter<Iter> captures;
 
 		public:
-
-			/**
-			 * \brief Iterator for the captures
-			 */
-			struct iterator
-			{
-				template <typename>
-				friend struct basic_match_result;
-
-				iterator() noexcept : cap(nullptr) {}
-
-				PG_LEX_NODISCARD const detail::capture<CharT> & operator *() const noexcept { assert(cap); return *cap; }
-				PG_LEX_NODISCARD const detail::capture<CharT> * operator ->() const noexcept { assert(cap); return cap; }
-
-				iterator &operator++() noexcept { move(1); return *this; }
-				iterator &operator--() noexcept { move(-1); return *this; }
-				iterator operator++(int) noexcept { const auto tmp = iterator(cap + 1); move(1); return tmp; }
-				iterator operator--(int) noexcept { const auto tmp = iterator(cap - 1); move(-1); return tmp; }
-				iterator &operator+=(int i) noexcept { move(i); return *this; }
-				iterator &operator-=(int i) noexcept { move(-i); return *this; }
-				PG_LEX_NODISCARD iterator operator+(int i) const noexcept { assert(cap); return iterator(cap + i); }
-				PG_LEX_NODISCARD iterator operator-(int i) const noexcept { assert(cap); return iterator(cap - i); }
-				PG_LEX_NODISCARD bool operator==(const iterator &other) const noexcept { return cap == other.cap; }
-				PG_LEX_NODISCARD bool operator!=(const iterator &other) const noexcept { return cap != other.cap; }
-
-			private:
-				const detail::capture<CharT> * cap = nullptr;
-
-				iterator(const detail::capture<CharT> * c) noexcept
-					: cap(c)
-				{
-					assert(cap);
-				}
-
-				void move(int i) noexcept
-				{
-					assert(cap);
-					cap += i;
-				}
-			};
-
 			/**
 			 * \brief Returns an iterator to the begin of the capture list.
 			 */
-			PG_LEX_NODISCARD iterator begin() const noexcept { return { captures.data() }; }
+			PG_LEX_NODISCARD iterator begin() const noexcept(std::is_nothrow_move_constructible<iterator>::value)
+			{
+				return captures.data();
+			}
 
 			/**
 			 * \brief Returns an iterator to the end of the capture list.
 			 */
-			PG_LEX_NODISCARD iterator end() const noexcept { return { captures.data() + size() }; }
+			PG_LEX_NODISCARD iterator end() const noexcept(std::is_nothrow_move_constructible<iterator>::value)
+			{
+				return captures.data() + size();
+			}
 
 			/**
 			 * \brief Returns the number of captures.
 			 */
-			PG_LEX_NODISCARD size_t size() const noexcept { assert(level >= 0); return level; }
+			PG_LEX_NODISCARD size_t size() const noexcept
+			{
+				assert(level >= 0);
+				return level;
+			}
 
 			/**
 			 * \brief Conversion to bool for easy evaluation if the match result contains match data.
 			 */
-			PG_LEX_NODISCARD operator bool() const noexcept { return level > 0; }
+			PG_LEX_NODISCARD operator bool() const noexcept
+			{
+				return level > 0;
+			}
 
 			/**
 			 * \brief Returns a std::string_view of the requested capture.
 			 *
 			 * This function throws a 'capture_out_of_range' when match result doesn't have a capture at the requested index.
 			 */
-			PG_LEX_NODISCARD auto at(size_t i) const
+			PG_LEX_NODISCARD const_reference at(size_t i) const
 			{
 				if(static_cast<int>(i) >= level) PG_LEX_UNLIKELY
 				{
@@ -353,13 +381,16 @@ namespace pg
 			 *
 			 * \note first and second are -1 when the match result doesn't contain match data.
 			 */
-			PG_LEX_NODISCARD const std::pair<int, int> & position() const noexcept { return pos; }
+			PG_LEX_NODISCARD const std::pair<difference_type, difference_type> &position() const noexcept { return pos; }
 
 			/**
 			 * \brief Returns the length of the match.
 			 */
 			PG_LEX_NODISCARD size_t length() const noexcept { return pos.second - pos.first; }
 		};
+
+		template <class CharT>
+		using basic_match_result = basic_match_result_iter<const CharT*>;
 
 		using match_result = basic_match_result<char>;
 		using wmatch_result = basic_match_result<wchar_t>;
@@ -369,19 +400,26 @@ namespace pg
 		using u16match_result = basic_match_result<char16_t>;
 		using u32match_result = basic_match_result<char32_t>;
 
-
 		namespace detail
 		{
+			template <typename Iter>
+			using pos_result_iter = std::pair<Iter, bool>;
+
 			template <typename CharT>
-			using pos_result = std::pair<const CharT *, bool>;
+			using pos_result = pos_result_iter<const CharT*>;
+
+			template <typename StrIter, typename PatIter>
+			using common_unsigned_char_iter = typename std::make_unsigned<typename std::common_type<typename std::iterator_traits<StrIter>::value_type, typename std::iterator_traits<PatIter>::value_type>::type>;
 
 			template <typename StrCharT, typename PatCharT>
-			using common_unsigned_char = typename std::make_unsigned<typename std::common_type<StrCharT, PatCharT>::type>;
+			using common_unsigned_char = common_unsigned_char_iter<const StrCharT*, const PatCharT*>;
 
-			template <typename StrCharT, typename PatCharT>
-			struct match_state
+			template <typename StrIter, typename PatIter>
+			struct match_state_iter
 			{
-				match_state(const StrCharT * str_begin, const StrCharT * str_end, const PatCharT * pat_end, basic_match_result<StrCharT> & mr) noexcept
+				using difference_type = typename std::iterator_traits<StrIter>::difference_type;
+
+				match_state_iter(StrIter str_begin, StrIter str_end, PatIter pat_end, basic_match_result_iter<StrIter> &mr) noexcept(std::is_nothrow_move_constructible<StrIter>::value && std::is_nothrow_move_constructible<PatIter>::value)
 					: s_begin(str_begin)
 					, s_end(str_end)
 					, p_end(pat_end)
@@ -400,25 +438,26 @@ namespace pg
 					pos = { -1, -1 };
 				}
 
-				const StrCharT * const s_begin;
-				const StrCharT * const s_end;
-				const PatCharT * const p_end;
+				StrIter const s_begin;
+				StrIter const s_end;
+				PatIter const p_end;
 				int matchdepth = MAXCCALLS; // Control for recursive depth (to avoid stack overflow)
 
-				int & level; // Total number of captures (finished or unfinished)
-				detail::captures<StrCharT> & captures;
-				std::pair<int, int> & pos;
+				int &level; // Total number of captures (finished or unfinished)
+				detail::captures_iter<StrIter> &captures;
+				std::pair<difference_type, difference_type> &pos;
 			};
 
-
 			template <typename StrCharT, typename PatCharT>
-			auto match(match_state<StrCharT, PatCharT> & ms, const StrCharT * s, const PatCharT * p) noexcept -> pos_result<StrCharT>;
+			using match_state = match_state_iter<const StrCharT*, const PatCharT*>;
+
+			template <typename StrIter, typename PatIter>
+			pos_result_iter<StrIter> match(match_state_iter<StrIter, PatIter> &ms, StrIter s, PatIter p);
 
 			bool match_class(int c, int cl) noexcept;
 
-
-			template <typename PatCharT>
-			auto find_bracket_class_end(const PatCharT * p) noexcept
+			template <typename PatIter>
+			PatIter find_bracket_class_end(PatIter p)
 			{
 				do
 				{
@@ -432,12 +471,12 @@ namespace pg
 				return p;
 			}
 
-			template <typename StrCharT, typename PatCharT>
-			auto matchbracketclass(const match_state<StrCharT, PatCharT> & ms, const StrCharT c, const PatCharT * p) noexcept -> pos_result<PatCharT>
+			template <typename StrIter, typename PatIter>
+			pos_result_iter<PatIter> matchbracketclass(const match_state_iter<StrIter, PatIter> &ms, const typename std::iterator_traits<StrIter>::value_type c, PatIter p)
 			{
-				using uchar_t = typename common_unsigned_char<StrCharT, PatCharT>::type;
+				using uchar_t = typename common_unsigned_char_iter<StrIter, PatIter>::type;
 
-				const auto uc = static_cast<uchar_t>(c);
+				const uchar_t uc = static_cast<uchar_t>(c);
 
 				bool ret = true;
 				if(*(++p) == '^')
@@ -459,7 +498,7 @@ namespace pg
 					else
 					{
 						auto ec = p + 2;
-						if(*(p + 1) == '-' && ec < ms.p_end && *ec != ']')
+						if(*(p + 1) == '-' && ec != ms.p_end && *ec != ']')
 						{
 							const auto min = static_cast<uchar_t>(*p);
 							const auto max = static_cast<uchar_t>(*ec);
@@ -482,12 +521,12 @@ namespace pg
 				return {p, !ret};
 			}
 
-			template <typename StrCharT, typename PatCharT>
-			auto single_match_pr(const match_state<StrCharT, PatCharT> & ms, const StrCharT * s, const PatCharT * p) noexcept -> pos_result<PatCharT>
+			template <typename StrIter, typename PatIter>
+			pos_result_iter<PatIter> single_match_pr(const match_state_iter<StrIter, PatIter> &ms, StrIter s, PatIter p)
 			{
-				using uchar_t = typename common_unsigned_char<StrCharT, PatCharT>::type;
+				using uchar_t = typename common_unsigned_char_iter<StrIter, PatIter>::type;
 
-				const bool not_end = s < ms.s_end;
+				const bool not_end = s != ms.s_end;
 
 				switch(*p)
 				{
@@ -500,7 +539,7 @@ namespace pg
 					case '[':
 						if(not_end)
 						{
-							const PatCharT *ep;
+							PatIter ep;
 							bool res;
 							std::tie(ep, res) = matchbracketclass(ms, *s, p);
 							return {find_bracket_class_end(ep), res};
@@ -512,11 +551,10 @@ namespace pg
 				}
 			}
 
-
-			template <typename StrCharT, typename PatCharT>
-			bool single_match(const match_state<StrCharT, PatCharT> & ms, StrCharT c, const PatCharT * p) noexcept
+			template <typename StrIter, typename PatIter>
+			bool single_match(const match_state_iter<StrIter, PatIter> &ms, const typename std::iterator_traits<StrIter>::value_type c, PatIter p)
 			{
-				using uchar_t = typename common_unsigned_char<StrCharT, PatCharT>::type;
+				using uchar_t = typename common_unsigned_char_iter<StrIter, PatIter>::type;
 
 				switch(*p)
 				{
@@ -534,29 +572,28 @@ namespace pg
 				}
 			}
 
-
-			template <typename StrCharT, typename PatCharT>
-			const StrCharT * matchbalance(const match_state<StrCharT, PatCharT> & ms, const StrCharT * s, const PatCharT * p) noexcept
+			template <typename StrIter, typename PatIter>
+			StrIter matchbalance(const match_state_iter<StrIter, PatIter> &ms, StrIter s, PatIter p)
 			{
-				using uchar_t = typename common_unsigned_char<StrCharT, PatCharT>::type;
+				using uchar_t = typename common_unsigned_char_iter<StrIter, PatIter>::type;
 
 				if(static_cast<uchar_t>(*s) != static_cast<uchar_t>(*p))
 				{
-					return nullptr;
+					return ms.s_end;
 				}
 				else
 				{
 					const auto b = static_cast<uchar_t>(*p);
 					const auto e = static_cast<uchar_t>(*(p + 1));
 					int count = 1;
-					while(++s < ms.s_end)
+					while(++s != ms.s_end)
 					{
 						const auto uc = static_cast<uchar_t>(*s);
 						if(uc == e)
 						{
 							if(--count == 0)
 							{
-								return s + 1;
+								return s;
 							}
 						}
 						else if(uc == b)
@@ -565,15 +602,14 @@ namespace pg
 						}
 					}
 				}
-				return nullptr;
+				return ms.s_end;
 			}
 
-
-			template <typename StrCharT, typename PatCharT>
-			auto max_expand(match_state<StrCharT, PatCharT> & ms, const StrCharT * s, const PatCharT * p, const PatCharT * ep) noexcept -> pos_result<StrCharT>
+			template <typename StrIter, typename PatIter>
+			pos_result_iter<StrIter> max_expand(match_state_iter<StrIter, PatIter> &ms, StrIter s, PatIter p, PatIter ep)
 			{
 				ptrdiff_t i = 0;
-				while((s + i) < ms.s_end && single_match(ms, *(s + i), p))
+				while((s + i) != ms.s_end && single_match(ms, *(s + i), p))
 				{
 					++i;
 				}
@@ -591,9 +627,8 @@ namespace pg
 				return { s, false };
 			}
 
-
-			template <typename StrCharT, typename PatCharT>
-			auto min_expand(match_state<StrCharT, PatCharT> & ms, const StrCharT * s, const PatCharT * p, const PatCharT * ep) noexcept -> pos_result<StrCharT>
+			template <typename StrIter, typename PatIter>
+			pos_result_iter<StrIter> min_expand(match_state_iter<StrIter, PatIter> &ms, StrIter s, PatIter p, PatIter ep)
 			{
 				for(; ;)
 				{
@@ -613,9 +648,8 @@ namespace pg
 				}
 			}
 
-
-			template <typename StrCharT, typename PatCharT>
-			auto start_capture(match_state<StrCharT, PatCharT> & ms, const StrCharT * s, const PatCharT * p) noexcept
+			template <typename StrIter, typename PatIter>
+			pos_result_iter<StrIter> start_capture(match_state_iter<StrIter, PatIter> &ms, StrIter s, PatIter p)
 			{
 				ms.captures[ms.level].init(s);
 
@@ -641,9 +675,8 @@ namespace pg
 				return res;
 			}
 
-
-			template <typename StrCharT, typename PatCharT>
-			auto end_capture(match_state<StrCharT, PatCharT> & ms, const StrCharT * s, const PatCharT * p) noexcept -> pos_result<StrCharT>
+			template <typename StrIter, typename PatIter>
+			pos_result_iter<StrIter> end_capture(match_state_iter<StrIter, PatIter> &ms, StrIter s, PatIter p)
 			{
 				int i = ms.level;
 				for(--i ; i >= 0 ; --i)
@@ -666,14 +699,13 @@ namespace pg
 				return { s, false };
 			}
 
-
-			template <typename StrCharT, typename PatCharT>
-			auto match_capture(match_state<StrCharT, PatCharT> & ms, const StrCharT * s, PatCharT c) noexcept -> pos_result<StrCharT>
+			template <typename StrIter, typename PatIter>
+			pos_result_iter<StrIter> match_capture(match_state_iter<StrIter, PatIter> &ms, StrIter s, typename std::iterator_traits<PatIter>::value_type c)
 			{
 				const int i = c - '1';
 				const int len = ms.captures[i].len();
-				const StrCharT * c_begin = ms.captures[i].init();
-				const StrCharT * c_end = c_begin + len;
+				StrIter c_begin = ms.captures[i].init();
+				StrIter c_end = c_begin + len;
 				if((ms.s_end - s) >= len &&
 					std::equal(c_begin, c_end, s))
 				{
@@ -683,10 +715,11 @@ namespace pg
 				return { s, false };
 			}
 
-
-			template <typename StrCharT, typename PatCharT>
-			auto match(match_state<StrCharT, PatCharT> & ms, const StrCharT * s, const PatCharT * p) noexcept -> pos_result<StrCharT>
+			template <typename StrIter, typename PatIter>
+			pos_result_iter<StrIter> match(match_state_iter<StrIter, PatIter> &ms, StrIter s, PatIter p)
 			{
+				using StrCharT = typename std::iterator_traits<StrIter>::value_type;
+
 				while(p != ms.p_end)
 				{
 					switch(*p)
@@ -708,20 +741,23 @@ namespace pg
 							switch(*(p + 1))
 							{
 								case 'b': // Balanced string?
-									if(auto res = matchbalance(ms, s, p + 2))
+								{
+									auto res = matchbalance(ms, s, p + 2);
+									if(res != ms.s_end)
 									{
-										s = res;
+										s = res + 1;
 										p += 4;
 										continue;
 									}
-									return { s, false };
+									return {s, false};
+								}
 
 								case 'f': // Frontier?
 									p += 2;
 									if(matchbracketclass(ms, *s, p).second)
 									{
 										const StrCharT previous = (s == ms.s_begin) ? '\0' : *(s - 1);
-										const PatCharT *ep;
+										PatIter ep;
 										bool res;
 										std::tie(ep, res) = matchbracketclass(ms, previous, p) ;
 										if(!res)
@@ -748,7 +784,7 @@ namespace pg
 							}
 					}
 
-					const PatCharT *ep;
+					PatIter ep;
 					bool r;
 					std::tie(ep, r) = single_match_pr(ms, s, p);
 					if(r)
@@ -795,7 +831,6 @@ namespace pg
 				return { s, true };
 			}
 
-
 			template <typename CharT>
 			void append_number(std::basic_string<CharT>& str, ptrdiff_t number) noexcept
 			{
@@ -808,42 +843,55 @@ namespace pg
 				str.append(1, '0' + (number % 10));
 			}
 
-
-			template <typename CharT>
-			struct string_context
+			template <typename Iter>
+			struct string_context_iter
 			{
-				string_context(const CharT * s) noexcept
-					: string_context(s, std::char_traits<CharT>::length(s))
-				{}
+				string_context_iter(const Iter begin, const Iter end) noexcept(std::is_nothrow_copy_constructible<Iter>())
+					: begin(begin), end(end)
+				{
 
-				string_context(const CharT * s, size_t l) noexcept
-					: begin(s)
-					, end(s + l)
-				{}
+				}
 
-				template <size_t N>
-				string_context(const CharT(& s)[N]) noexcept
-					: string_context(s, N)
-				{}
-
-				template <typename Traits, typename Allocator>
-				string_context(const std::basic_string<CharT, Traits, Allocator> & s) noexcept
-					: string_context(s.data(), s.size())
-				{}
-
-#if defined(__cpp_lib_string_view)
-				template <typename Traits>
-				string_context(const std::basic_string_view<CharT, Traits> & s) noexcept
-					: string_context(s.data(), s.size())
-				{}
-#endif
-
-				const CharT * const begin = nullptr;
-				const CharT * const end = nullptr;
+				const Iter begin;
+				const Iter end;
 			};
 
 			template <typename CharT>
-			auto find_bracket_class_end(const CharT * p, const CharT * ep)
+			struct string_context : string_context_iter<const CharT*>
+			{
+				string_context(const CharT *s) noexcept
+					: string_context_iter(s, s + std::char_traits<CharT>::length(s))
+				{
+				}
+
+				string_context(const CharT *s, size_t l) noexcept
+					: string_context_iter(s, s + l)
+				{
+				}
+
+				template <size_t N>
+				string_context(const CharT(&s)[N]) noexcept
+					: string_context_iter(std::begin(s), std::end(s))
+				{
+				}
+
+				template <typename Traits, typename Allocator>
+				string_context(const std::basic_string<CharT, Traits, Allocator> &s) noexcept
+					: string_context_iter(&s[0], &s[0] + s.size())
+				{
+				}
+
+#if defined(__cpp_lib_string_view)
+				template <typename Traits>
+				string_context(const std::basic_string_view<CharT, Traits> &s) noexcept
+					: string_context_iter(&s[0], &s[0] + s.size())
+				{
+				}
+#endif
+			};
+
+			template <typename Iter>
+			auto find_bracket_class_end(Iter p, Iter ep)
 			{
 				do
 				{
@@ -869,17 +917,13 @@ namespace pg
 			}
 		}
 
-		template <typename CharT>
-		struct pattern
+		template <typename Iter>
+		struct pattern_iter
 		{
-			pattern(const CharT * p)
-				: pattern(p, std::char_traits<CharT>::length(p))
-			{}
-
-			pattern(const CharT * const p, size_t l)
-				: end(p + l)
-				, anchor(p < end && *p == '^')
-				, begin(anchor ? p + 1 : p)
+			pattern_iter(const Iter begin, const Iter end)
+				: end(end)
+				, anchor(begin != end && *begin == '^')
+				, begin(anchor ? begin + 1 : begin)
 			{
 				enum class capture_state { available, unfinished, finished };
 
@@ -991,26 +1035,38 @@ namespace pg
 				}
 			}
 
+			const Iter end;
+			const bool anchor;
+			const Iter begin;
+		};
+
+		template <class CharT>
+		struct pattern : public pattern_iter<const CharT*>
+		{
+			pattern(const CharT *p) : pattern_iter(p, p + std::char_traits<CharT>::length(p))
+			{
+			}
+
+			pattern(const CharT *p, size_t l) : pattern_iter(p, p + l)
+			{
+			}
+
 			template <size_t N>
-			pattern(const CharT(& p)[N])
-				: pattern(p, N)
-			{}
+			pattern(const CharT(&p)[N]) : pattern_iter(std::begin(p), std::end(p))
+			{
+			}
 
 			template <typename Traits, typename Allocator>
-			pattern(const std::basic_string<CharT, Traits, Allocator> & s)
-				: pattern(s.data(), s.size())
-			{}
+			pattern(const std::basic_string<CharT, Traits, Allocator> &s) : pattern_iter(&s[0], &s[0] + s.size())
+			{
+			}
 
 #if defined(__cpp_lib_string_view)
 			template <typename Traits>
-			pattern(const std::basic_string_view<CharT, Traits> & s)
-				: pattern(s.data(), s.size())
-			{}
+			pattern(const std::basic_string_view<CharT, Traits> &s) : pattern_iter(&s[0], &s[0] + s.size())
+			{
+			}
 #endif
-
-			const CharT * const end = nullptr;
-			const bool anchor = false;
-			const CharT * const begin = nullptr;
 		};
 
 		/**
