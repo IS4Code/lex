@@ -23,49 +23,61 @@
 #include "lex.h"
 #include <cctype>
 
-static const char * lex_error_text( pg::lex::error_type code ) noexcept
+static const char * lex_error_text(pg::lex::error_type code) noexcept
 {
-    switch( code )
+    switch(code)
     {
-    case pg::lex::pattern_too_complex:                  return "pattern too complex";
-    case pg::lex::pattern_ends_with_percent:            return "malformed pattern (ends with '%%')";
-    case pg::lex::pattern_missing_closing_bracket:      return "malformed pattern (missing ']')";
-    case pg::lex::balanced_no_arguments:                return "malformed pattern (missing arguments to '%b')";
-    case pg::lex::frontier_no_open_bracket:             return "missing '[' after '%%f' in pattern";
-    case pg::lex::capture_too_many:                     return "too many captures";
-    case pg::lex::capture_invalid_pattern:              return "invalid pattern capture";
-    case pg::lex::capture_invalid_index:                return "invalid capture index";
-    case pg::lex::capture_not_finished:                 return "unfinished capture";
-    case pg::lex::capture_out_of_range:                 return "capture out of range";
-    case pg::lex::percent_invalid_use_in_replacement:   return "invalid use of '%%' in replacement string";
-    default:                                            return "lex error";
+		case pg::lex::pattern_too_complex:
+			return "pattern too complex";
+		case pg::lex::pattern_ends_with_percent:
+			return "malformed pattern (ends with '%%')";
+		case pg::lex::pattern_missing_closing_bracket:
+			return "malformed pattern (missing ']')";
+		case pg::lex::balanced_no_arguments:
+			return "malformed pattern (missing arguments to '%b')";
+		case pg::lex::frontier_no_open_bracket:
+			return "missing '[' after '%%f' in pattern";
+		case pg::lex::capture_too_many:
+			return "too many captures";
+		case pg::lex::capture_invalid_pattern:
+			return "invalid pattern capture";
+		case pg::lex::capture_invalid_index:
+			return "invalid capture index";
+		case pg::lex::capture_not_finished:
+			return "unfinished capture";
+		case pg::lex::capture_out_of_range:
+			return "capture out of range";
+		case pg::lex::percent_invalid_use_in_replacement:
+			return "invalid use of '%%' in replacement string";
+		default:
+			return "lex error";
     }
 }
 
 
-pg::lex::lex_error::lex_error( pg::lex::error_type ec ) noexcept
-    : runtime_error( lex_error_text( ec ) )
-    , error_code( ec )
+pg::lex::lex_error::lex_error(pg::lex::error_type ec) noexcept
+    : runtime_error(lex_error_text(ec))
+    , error_code(ec)
 {}
 
 
-bool pg::lex::detail::match_class( int c, int cl ) noexcept
+bool pg::lex::detail::match_class(int c, int cl) noexcept
 {
     bool res;
-    switch( std::tolower( cl ) )
+    switch(std::tolower(cl))
     {
-        case 'a' : res = std::isalpha( c ); break;
-        case 'c' : res = std::iscntrl( c ); break;
-        case 'd' : res = std::isdigit( c ); break;
-        case 'g' : res = std::isgraph( c ); break;
-        case 'l' : res = std::islower( c ); break;
-        case 'p' : res = std::ispunct( c ); break;
-        case 's' : res = std::isspace( c ); break;
-        case 'u' : res = std::isupper( c ); break;
-        case 'w' : res = std::isalnum( c ); break;
-        case 'x' : res = std::isxdigit( c ); break;
-        case 'z' : res = (c == 0); break;  // Deprecated option
+        case 'a': res = std::isalpha(c); break;
+        case 'c': res = std::iscntrl(c); break;
+        case 'd': res = std::isdigit(c); break;
+        case 'g': res = std::isgraph(c); break;
+        case 'l': res = std::islower(c); break;
+        case 'p': res = std::ispunct(c); break;
+        case 's': res = std::isspace(c); break;
+        case 'u': res = std::isupper(c); break;
+        case 'w': res = std::isalnum(c); break;
+        case 'x': res = std::isxdigit(c); break;
+        case 'z': res = (c == 0); break; // Deprecated option
         default: return cl == c;
     }
-    return std::islower( cl ) ? res : !res;
+    return std::islower(cl) ? res : !res;
 }
