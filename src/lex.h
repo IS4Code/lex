@@ -35,6 +35,7 @@
 #include <type_traits>
 #include <memory>
 #include <iterator>
+#include <tuple>
 
 #ifdef __has_cpp_attribute
 # if __has_cpp_attribute( unlikely )
@@ -115,6 +116,8 @@ struct capture
         return { begin, static_cast< size_t >( std::max( length, 0 ) ) };
     }
 #endif
+
+	const CharT * data() const noexcept { return begin; }
 
 private:
     enum cap_state : int
@@ -479,7 +482,9 @@ auto single_match_pr( const match_state< StrCharT, PatCharT > & ms,  const StrCh
     case '[':
         if( not_end )
         {
-            auto [ ep, res ] = matchbracketclass( ms, *s, p );
+			const StrCharT * ep;
+			bool res;
+			std::tie(ep, res) = matchbracketclass( ms, *s, p );
             return { find_bracket_class_end( ep ), res };
         }
         return { find_bracket_class_end( p ), false };
@@ -696,7 +701,10 @@ auto match( match_state< StrCharT, PatCharT > & ms, const StrCharT * s, const Pa
                 if( matchbracketclass( ms, *s, p ).second )
                 {
                     const StrCharT previous = ( s == ms.s_begin ) ? '\0' : *( s - 1 );
-                    if( auto [ ep, res ] = matchbracketclass( ms, previous, p ) ; !res )
+					const StrCharT * ep;
+					bool res;
+					std::tie(ep, res) = matchbracketclass( ms, previous, p ) ;
+                    if( !res )
                     {
                         assert( *ep == ']' );
                         p = ep + 1;
@@ -717,7 +725,9 @@ auto match( match_state< StrCharT, PatCharT > & ms, const StrCharT * s, const Pa
             }
         }
 
-        const auto [ ep, r ] = single_match_pr( ms, s, p );
+		const StrCharT * const ep;
+		const bool r;
+		std::tie(e, r) = single_match_pr(ms, s, p);
         if( r )
         {
             switch( *ep )  // Handle optional suffix
@@ -1063,7 +1073,9 @@ struct gmatch_iterator
 
         while( pos <= c.s.end )
         {
-            auto [ e, r ] = detail::match( ms, pos, c.p.begin );
+			const StrCharT * e;
+			bool r;
+			std::tie(e, r) = detail::match( ms, pos, c.p.begin );
             if( !r || e == last_match )
             {
                 pos = e + 1;
@@ -1176,12 +1188,14 @@ PG_LEX_NODISCARD auto match_pat( StrT && str, const pattern< PatCharT > & pat )
 
     basic_match_result< str_char_type > mr;
     const auto                          c   = gmatch( std::forward< StrT >( str ), pat );
-    detail::match_state                 ms  = { c.s.begin, c.s.end, c.p.end, mr };
+    detail::match_state< str_char_type, PatCharT > ms  = { c.s.begin, c.s.end, c.p.end, mr };
     const str_char_type *               pos = c.s.begin;
 
     do
     {
-        auto [ e, r ] = detail::match( ms, pos, c.p.begin );
+		const str_char_type * e;
+		bool r;
+        std::tie( e, r ) = detail::match( ms, pos, c.p.begin );
         if( r )
         {
             ms.pos = { static_cast< int >( pos - c.s.begin ), static_cast< int >( e - c.s.begin ) };
