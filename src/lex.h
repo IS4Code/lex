@@ -614,20 +614,24 @@ namespace pg
 			template <typename StrIter, typename PatIter>
 			pos_result_iter<StrIter> max_expand(match_state_iter<StrIter, PatIter> &ms, StrIter s, PatIter p, PatIter ep)
 			{
-				ptrdiff_t i = 0;
-				while(std::next(s, i) != ms.s_end && single_match(ms, *std::next(s, i), p))
+				StrIter n = s;
+				while(n != ms.s_end && single_match(ms, *n, p))
 				{
-					++i;
+					++n;
 				}
 				// Keeps trying to match with the maximum repetitions
-				while(i >= 0)
+				while(true)
 				{
-					auto res = match(ms, std::next(s, i), std::next(ep));
+					auto res = match(ms, n, std::next(ep));
 					if(res.second)
 					{
 						return res;
 					}
-					--i;
+					if(n == s)
+					{
+						break;
+					}
+					--n;
 				}
 
 				return {s, false};
