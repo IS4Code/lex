@@ -176,57 +176,84 @@ namespace pg
 			template <typename, typename>
 			friend struct detail::matcher;
 
+			enum : char {
+				unfinished,
+				position
+			} state;
+
 			Iter init() const noexcept(std::is_nothrow_move_constructible<Iter>::value)
 			{
-				assert(matched);
+				assert(first_set);
 				return first;
 			}
 
-			void init(Iter i) noexcept(std::is_nothrow_copy_assignable<Iter>::value)
+			void init(Iter i)
 			{
+				first_set = true;
+				difference_type d = 0;
+				if(matched)
+				{
+					d = std::distance(first, second);
+				}
 				first = i;
+				second = std::next(i, d);
 			}
 
 			difference_type len() const
 			{
+				assert(first_set && matched);
 				return std::distance(first, second);
 			}
 
 			void len(difference_type l)
 			{
+				assert(first_set);
 				assert(l >= 0);
+				state = position;
+				matched = true;
 				second = std::next(first, l);
 			}
 
-			void mark_unfinished() noexcept
+			void mark_unfinished() noexcept(std::is_nothrow_copy_assignable<Iter>::value)
 			{
+				state = unfinished;
+				second = first;
 				matched = false;
 			}
 
-			void mark_position() noexcept
+			void mark_position() noexcept(std::is_nothrow_copy_assignable<Iter>::value)
 			{
-				matched = true;
+				state = position;
+				second = first;
+				matched = false;
 			}
 
 			bool is_unfinished() const noexcept
 			{
-				return matched;
+				return state == unfinished;
 			}
 
 			Iter begin() const noexcept(std::is_nothrow_move_constructible<Iter>::value)
 			{
+				assert(first_set);
 				return first;
 			}
 
 			Iter end() const noexcept(std::is_nothrow_move_constructible<Iter>::value)
 			{
+				if(!matched)
+				{
+					return begin();
+				}
 				return second;
 			}
+
+			bool first_set = false;
 
 		public:
 			string_type str() const
 			{
-				if(is_unfinished()) return {};
+				if(!matched) return {};
 				return {first, second};
 			}
 
@@ -238,7 +265,7 @@ namespace pg
 			template <typename It>
 			int compare(It begin, It end) const
 			{
-				if(is_unfinished())
+				if(!matched)
 				{
 					return detail::char_compare(begin, begin, begin, end);
 				}
@@ -248,9 +275,9 @@ namespace pg
 			template <typename It>
 			int compare(const capture_iter<It> &m) const
 			{
-				if(m.is_unfinished())
+				if(!m.matched)
 				{
-					if(is_unfinished())
+					if(!matched)
 					{
 						return 0;
 					}
@@ -287,7 +314,7 @@ namespace pg
 
 #if defined(PG_LEX_TESTS)
 			Iter data() const noexcept { return init(); }
-			std::size_t size() const noexcept { return len(); }
+			std::size_t size() const noexcept { return matched ? len() : 0; }
 #endif
 
 			bool matched = false;
