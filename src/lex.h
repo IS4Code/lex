@@ -70,6 +70,10 @@
 #define PG_LEX_MAXCAPTURES 32
 #endif
 
+#define PG_LEX_SYNTAX_PARAMS_DEFAULT(Iter) typename std::iterator_traits<Iter>::value_type ESC = '%'
+#define PG_LEX_SYNTAX_PARAMS(Iter) typename std::iterator_traits<Iter>::value_type ESC
+#define PG_LEX_SYNTAX_ARGS(Iter) ESC
+
 namespace pg
 {
 	namespace lex
@@ -106,10 +110,10 @@ namespace pg
 			template <typename T>
 			using char_type = typename string_traits<T>::char_type;
 
-			template <typename, typename>
+			template <typename StrIter, typename PatIter, PG_LEX_SYNTAX_PARAMS(PatIter)>
 			struct match_state_iter;
 
-			template <typename, typename>
+			template <typename StrIter, typename PatIter, PG_LEX_SYNTAX_PARAMS(PatIter)>
 			class matcher;
 
 			template<class I1, class I2>
@@ -170,10 +174,10 @@ namespace pg
 			using string_type = std::basic_string<value_type>;
 
 		private:
-			template <typename, typename>
+			template <typename StrIter, typename PatIter, PG_LEX_SYNTAX_PARAMS(PatIter)>
 			friend struct detail::match_state_iter;
-
-			template <typename, typename>
+			
+			template <typename StrIter, typename PatIter, PG_LEX_SYNTAX_PARAMS(PatIter)>
 			friend class detail::matcher;
 
 			enum : char {
@@ -457,7 +461,7 @@ namespace pg
 			using string_type = typename std::basic_string<char_type>;
 
 		private:
-			template <typename, typename>
+			template <typename StrIter, typename PatIter, PG_LEX_SYNTAX_PARAMS(PatIter)>
 			friend struct detail::match_state_iter;
 
 			std::pair<difference_type, difference_type> pos = { -1, -1 }; // The indices where the match starts and ends
@@ -545,7 +549,7 @@ namespace pg
 		using u16match_result = basic_match_result<char16_t>;
 		using u32match_result = basic_match_result<char32_t>;
 
-		template <typename Iter>
+		template <typename Iter, PG_LEX_SYNTAX_PARAMS(Iter)>
 		struct pattern_iter
 		{
 			using char_type = typename std::iterator_traits<Iter>::value_type;
@@ -606,7 +610,7 @@ namespace pg
 							++q;
 							continue;
 
-						case '%':
+						case ESC:
 							if(++q == end) PG_LEX_UNLIKELY
 							{
 								throw lex_error(pattern_ends_with_percent);
@@ -626,7 +630,7 @@ namespace pg
 								{
 									throw lex_error(frontier_no_open_bracket);
 								}
-								q = detail::find_bracket_class_end(q, end);
+								q = find_bracket_class_end(q, end);
 								continue;
 
 							case '0': case '1': case '2': case '3': case '4':
@@ -645,7 +649,7 @@ namespace pg
 
 					if(q != end && *q == '[')
 					{
-						q = detail::find_bracket_class_end(q, end);
+						q = find_bracket_class_end(q, end);
 					}
 					else
 					{
@@ -676,10 +680,36 @@ namespace pg
 				std::swap(locale, loc);
 				return loc;
 			}
+
+		private:
+			static Iter find_bracket_class_end(Iter p, Iter ep)
+			{
+				do
+				{
+					if(p == ep) PG_LEX_UNLIKELY
+					{
+						throw lex_error(pattern_missing_closing_bracket);
+					}
+					else if(*p == ESC)
+					{
+						if(++p == ep) PG_LEX_UNLIKELY // Skip escapes (e.g. '%]')
+						{
+							throw lex_error(pattern_ends_with_percent);
+						}
+						if(++p == ep) PG_LEX_UNLIKELY
+						{
+							throw lex_error(pattern_missing_closing_bracket);
+						}
+					}
+				}
+				while(*p++ != ']');
+
+				return p;
+			}
 		};
 
-		template <class CharT>
-		struct pattern : public pattern_iter<const CharT*>
+		template <class CharT, PG_LEX_SYNTAX_PARAMS_DEFAULT(const CharT*)>
+		struct pattern : public pattern_iter<const CharT*, PG_LEX_SYNTAX_ARGS(const CharT*)>
 		{
 			pattern(const CharT *p) : pattern_iter(p, p + std::char_traits<CharT>::length(p))
 			{
@@ -715,12 +745,12 @@ namespace pg
 			template <typename StrIter, typename PatIter>
 			using common_unsigned_char_iter = typename std::make_unsigned<typename std::common_type<typename std::iterator_traits<StrIter>::value_type, typename std::iterator_traits<PatIter>::value_type>::type>;
 
-			template <typename StrIter, typename PatIter>
+			template <typename StrIter, typename PatIter, PG_LEX_SYNTAX_PARAMS(PatIter)>
 			struct match_state_iter
 			{
 				using difference_type = typename std::iterator_traits<StrIter>::difference_type;
 
-				match_state_iter(StrIter str_begin, StrIter str_end, const pattern_iter<PatIter> &pat, basic_match_result_iter<StrIter> &mr) noexcept(std::is_nothrow_move_constructible<StrIter>::value && std::is_nothrow_move_constructible<PatIter>::value)
+				match_state_iter(StrIter str_begin, StrIter str_end, const pattern_iter<PatIter, PG_LEX_SYNTAX_ARGS(PatIter)> &pat, basic_match_result_iter<StrIter> &mr) noexcept(std::is_nothrow_move_constructible<StrIter>::value && std::is_nothrow_move_constructible<PatIter>::value)
 					: s_begin(str_begin)
 					, s_end(str_end)
 					, p(pat)
@@ -748,7 +778,7 @@ namespace pg
 
 				StrIter const s_begin;
 				StrIter const s_end;
-				const pattern_iter<PatIter> &p;
+				const pattern_iter<PatIter, PG_LEX_SYNTAX_ARGS(PatIter)> &p;
 				PatIter const p_end;
 				int matchdepth = PG_LEX_MAXCCALLS; // Control for recursive depth (to avoid stack overflow)
 
@@ -757,21 +787,21 @@ namespace pg
 				std::pair<difference_type, difference_type> &pos;
 			};
 
-			template <typename StrCharT, typename PatCharT>
-			using match_state = match_state_iter<const StrCharT*, const PatCharT*>;
+			template <typename StrCharT, typename PatCharT, PG_LEX_SYNTAX_PARAMS_DEFAULT(const PatCharT*)>
+			using match_state = match_state_iter<const StrCharT*, const PatCharT*, PG_LEX_SYNTAX_ARGS(const PatCharT*)>;
 
-			template <typename StrIter, typename PatIter>
+			template <typename StrIter, typename PatIter, PG_LEX_SYNTAX_PARAMS(PatIter)>
 			class matcher
 			{
 				using uchar_t = typename common_unsigned_char_iter<StrIter, PatIter>::type;
 				using str_char_type = typename std::iterator_traits<StrIter>::value_type;
 				using pat_char_type = typename std::iterator_traits<PatIter>::value_type;
 
-				const match_state_iter<StrIter, PatIter> &ms;
+				const match_state_iter<StrIter, PatIter, PG_LEX_SYNTAX_ARGS(PatIter)> &ms;
 				const std::ctype<str_char_type> &ctype;
 
 			public:
-				matcher(const match_state_iter<StrIter, PatIter> &ms) : ms(ms), ctype(std::use_facet<std::ctype<str_char_type>>(ms.p.locale))
+				matcher(const match_state_iter<StrIter, PatIter, PG_LEX_SYNTAX_ARGS(PatIter)> &ms) : ms(ms), ctype(std::use_facet<std::ctype<str_char_type>>(ms.p.locale))
 				{
 				}
 
@@ -857,7 +887,7 @@ namespace pg
 				{
 					do
 					{
-						if(*p == '%')
+						if(*p == ESC)
 						{
 							std::advance(p, 2);
 						}
@@ -880,7 +910,7 @@ namespace pg
 
 					do
 					{
-						if(*p == '%')
+						if(*p == ESC)
 						{
 							++p; // Skip escapes (e.g. '%]')
 							if(match_class(uc, *p))
@@ -923,7 +953,7 @@ namespace pg
 						case '.':
 							return {std::next(p), not_end}; // Matches any char
 
-						case '%':
+						case ESC:
 							return {std::next(p, 2), not_end && match_class(static_cast<uchar_t>(*s), *std::next(p))};
 
 						case '[':
@@ -948,7 +978,7 @@ namespace pg
 						case '.':
 							return true; // Matches any char
 
-						case '%':
+						case ESC:
 							return match_class(static_cast<uchar_t>(c), *std::next(p));
 
 						case '[':
@@ -1118,7 +1148,7 @@ namespace pg
 								}
 								return {s, s == ms.s_end};
 
-							case '%': // Escaped sequences not in the format class[*+?-]?
+							case ESC: // Escaped sequences not in the format class[*+?-]?
 								switch(*std::next(p))
 								{
 									case 'b': // Balanced string?
@@ -1213,10 +1243,10 @@ namespace pg
 				}
 			};
 
-			template <typename StrIter, typename PatIter>
-			static pos_result_iter<StrIter> match(const match_state_iter<StrIter, PatIter> &ms, StrIter s, PatIter p)
+			template <typename StrIter, typename PatIter, PG_LEX_SYNTAX_PARAMS(PatIter)>
+			static pos_result_iter<StrIter> match(const match_state_iter<StrIter, PatIter, PG_LEX_SYNTAX_ARGS(PatIter)> &ms, StrIter s, PatIter p)
 			{
-				return matcher<StrIter, PatIter>(ms).match(s, p);
+				return matcher<StrIter, PatIter, PG_LEX_SYNTAX_ARGS(PatIter)>(ms).match(s, p);
 			}
 
 			template <typename CharT>
@@ -1277,32 +1307,6 @@ namespace pg
 				}
 #endif
 			};
-
-			template <typename Iter>
-			auto find_bracket_class_end(Iter p, Iter ep)
-			{
-				do
-				{
-					if(p == ep) PG_LEX_UNLIKELY
-					{
-						throw lex_error(pattern_missing_closing_bracket);
-					}
-					else if(*p == '%')
-					{
-						if(++p == ep) PG_LEX_UNLIKELY // Skip escapes (e.g. '%]')
-						{
-							throw lex_error(pattern_ends_with_percent);
-						}
-						if(++p == ep) PG_LEX_UNLIKELY
-						{
-							throw lex_error(pattern_missing_closing_bracket);
-						}
-					}
-				}
-				while(*p++ != ']');
-
-				return p;
-			}
 		}
 
 		/**
