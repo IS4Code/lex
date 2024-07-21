@@ -59,25 +59,3 @@ pg::lex::lex_error::lex_error(pg::lex::error_type ec) noexcept
     : runtime_error(lex_error_text(ec))
     , error_code(ec)
 {}
-
-
-bool pg::lex::detail::match_class(int c, int cl) noexcept
-{
-    bool res;
-    switch(std::tolower(cl))
-    {
-        case 'a': res = std::isalpha(c); break;
-        case 'c': res = std::iscntrl(c); break;
-        case 'd': res = std::isdigit(c); break;
-        case 'g': res = std::isgraph(c); break;
-        case 'l': res = std::islower(c); break;
-        case 'p': res = std::ispunct(c); break;
-        case 's': res = std::isspace(c); break;
-        case 'u': res = std::isupper(c); break;
-        case 'w': res = std::isalnum(c); break;
-        case 'x': res = std::isxdigit(c); break;
-        case 'z': res = (c == 0); break; // Deprecated option
-        default: return cl == c;
-    }
-    return std::islower(cl) ? res : !res;
-}

@@ -36,7 +36,7 @@
 #include <memory>
 #include <iterator>
 #include <tuple>
-#include <cctype>
+#include <locale>
 #include <array>
 
 #ifdef __has_cpp_attribute
@@ -545,29 +545,186 @@ namespace pg
 		using u16match_result = basic_match_result<char16_t>;
 		using u32match_result = basic_match_result<char32_t>;
 
+		template <typename Iter>
+		struct pattern_iter
+		{
+			using char_type = typename std::iterator_traits<Iter>::value_type;
+			using locale_type = std::locale;
+
+			Iter end;
+			bool anchor;
+			Iter begin;
+			locale_type locale;
+
+			pattern_iter(const Iter begin, const Iter end)
+				: end(end)
+				, anchor(begin != end && *begin == '^')
+				, begin(anchor ? std::next(begin) : begin)
+			{
+				enum class capture_state { available, unfinished, finished };
+
+				int depth = 0;
+				capture_state captures[MAXCAPTURES] = {};
+				int capture_level = 0;
+
+				auto q = begin;
+				while(q != end)
+				{
+					switch(*q)
+					{
+						case '(':
+							if(capture_level > MAXCAPTURES) PG_LEX_UNLIKELY
+							{
+								throw lex_error(capture_too_many);
+							}
+							captures[capture_level++] = capture_state::unfinished;
+							++q;
+							++depth;
+							continue;
+
+						case ')':
+						{
+							auto level = capture_level;
+							while(--level >= 0)
+							{
+								if(captures[level] == capture_state::unfinished)
+								{
+									captures[level] = capture_state::finished;
+									break;
+								}
+							}
+							if(level < 0) PG_LEX_UNLIKELY
+							{
+								throw lex_error(capture_invalid_pattern);
+							}
+							++q;
+							++depth;
+							continue;
+						}
+
+						case '$':
+							++q;
+							continue;
+
+						case '%':
+							if(++q == end) PG_LEX_UNLIKELY
+							{
+								throw lex_error(pattern_ends_with_percent);
+							}
+							switch(*q)
+							{
+							case 'b':
+								if(std::distance(q, end) < 3) PG_LEX_UNLIKELY
+								{
+									throw lex_error(balanced_no_arguments);
+								}
+								std::advance(q, 3);
+								continue;
+
+							case 'f':
+								if(++q == end || *q != '[') PG_LEX_UNLIKELY
+								{
+									throw lex_error(frontier_no_open_bracket);
+								}
+								q = detail::find_bracket_class_end(q, end);
+								continue;
+
+							case '0': case '1': case '2': case '3': case '4':
+							case '5': case '6': case '7': case '8': case '9':
+								const int i = *q - '1';
+								if(i < 0 ||
+									i >= capture_level ||
+									captures[i] != capture_state::finished) PG_LEX_UNLIKELY
+								{
+									throw lex_error(capture_invalid_index);
+								}
+								++q;
+								continue;
+							}
+					}
+
+					if(q != end && *q == '[')
+					{
+						q = detail::find_bracket_class_end(q, end);
+					}
+					else
+					{
+						++q;
+					}
+					if(q != end && (*q == '*' || *q == '+' || *q == '?' || *q == '-'))
+					{
+						++q;
+					}
+
+					++depth;
+				}
+
+				if(std::any_of(captures, captures + capture_level,
+								 [](const auto cap){ return cap != capture_state::finished; })) PG_LEX_UNLIKELY
+				{
+					throw lex_error(capture_not_finished);
+				}
+
+				if(depth > MAXCCALLS) PG_LEX_UNLIKELY
+				{
+					throw lex_error(pattern_too_complex);
+				}
+			}
+
+			locale_type imbue(locale_type loc)
+			{
+				std::swap(locale, loc);
+				return loc;
+			}
+		};
+
+		template <class CharT>
+		struct pattern : public pattern_iter<const CharT*>
+		{
+			pattern(const CharT *p) : pattern_iter(p, p + std::char_traits<CharT>::length(p))
+			{
+			}
+
+			pattern(const CharT *p, size_t l) : pattern_iter(p, p + l)
+			{
+			}
+
+			template <size_t N>
+			pattern(const CharT(&p)[N]) : pattern_iter(std::begin(p), std::end(p))
+			{
+			}
+
+			template <typename Traits, typename Allocator>
+			pattern(const std::basic_string<CharT, Traits, Allocator> &s) : pattern_iter(&s[0], &s[0] + s.size())
+			{
+			}
+
+#if defined(__cpp_lib_string_view)
+			template <typename Traits>
+			pattern(const std::basic_string_view<CharT, Traits> &s) : pattern_iter(&s[0], &s[0] + s.size())
+			{
+			}
+#endif
+		};
+
 		namespace detail
 		{
 			template <typename Iter>
 			using pos_result_iter = std::pair<Iter, bool>;
 
-			template <typename CharT>
-			using pos_result = pos_result_iter<const CharT*>;
-
 			template <typename StrIter, typename PatIter>
 			using common_unsigned_char_iter = typename std::make_unsigned<typename std::common_type<typename std::iterator_traits<StrIter>::value_type, typename std::iterator_traits<PatIter>::value_type>::type>;
-
-			template <typename StrCharT, typename PatCharT>
-			using common_unsigned_char = common_unsigned_char_iter<const StrCharT*, const PatCharT*>;
 
 			template <typename StrIter, typename PatIter>
 			struct match_state_iter
 			{
 				using difference_type = typename std::iterator_traits<StrIter>::difference_type;
 
-				match_state_iter(StrIter str_begin, StrIter str_end, PatIter pat_end, basic_match_result_iter<StrIter> &mr) noexcept(std::is_nothrow_move_constructible<StrIter>::value && std::is_nothrow_move_constructible<PatIter>::value)
+				match_state_iter(StrIter str_begin, StrIter str_end, const pattern_iter<PatIter> &pat, basic_match_result_iter<StrIter> &mr) noexcept(std::is_nothrow_move_constructible<StrIter>::value && std::is_nothrow_move_constructible<PatIter>::value)
 					: s_begin(str_begin)
 					, s_end(str_end)
-					, p_end(pat_end)
+					, p(pat)
+					, p_end(pat.end)
 					, level(mr.level)
 					, captures(mr.captures)
 					, pos(mr.pos)
@@ -591,6 +748,7 @@ namespace pg
 
 				StrIter const s_begin;
 				StrIter const s_end;
+				const pattern_iter<PatIter> &p;
 				PatIter const p_end;
 				int matchdepth = MAXCCALLS; // Control for recursive depth (to avoid stack overflow)
 
@@ -602,8 +760,6 @@ namespace pg
 			template <typename StrCharT, typename PatCharT>
 			using match_state = match_state_iter<const StrCharT*, const PatCharT*>;
 
-			bool match_class(int c, int cl) noexcept;
-
 			template <typename StrIter, typename PatIter>
 			class matcher
 			{
@@ -612,13 +768,91 @@ namespace pg
 				using pat_char_type = typename std::iterator_traits<PatIter>::value_type;
 
 				const match_state_iter<StrIter, PatIter> &ms;
+				const std::ctype<str_char_type> &ctype;
 
 			public:
-				matcher(const match_state_iter<StrIter, PatIter> &ms) : ms(ms)
+				matcher(const match_state_iter<StrIter, PatIter> &ms) : ms(ms), ctype(std::use_facet<std::ctype<str_char_type>>(ms.p.locale))
 				{
 				}
 
 			private:
+				bool match_class(str_char_type c, pat_char_type cl) const
+				{
+					std::ctype_base::mask test;
+					bool neg = false;
+					switch(cl)
+					{
+						case 'A':
+							neg = true;
+							PG_LEX_FALLTHROUGH;
+						case 'a':
+							test = std::ctype_base::alpha;
+							break;
+						case 'C':
+							neg = true;
+							PG_LEX_FALLTHROUGH;
+						case 'c':
+							test = std::ctype_base::cntrl;
+							break;
+						case 'D':
+							neg = true;
+							PG_LEX_FALLTHROUGH;
+						case 'd':
+							test = std::ctype_base::digit;
+							break;
+						case 'G':
+							neg = true;
+							PG_LEX_FALLTHROUGH;
+						case 'g':
+							test = std::ctype_base::graph;
+							break;
+						case 'L':
+							neg = true;
+							PG_LEX_FALLTHROUGH;
+						case 'l':
+							test = std::ctype_base::lower;
+							break;
+						case 'P':
+							neg = true;
+							PG_LEX_FALLTHROUGH;
+						case 'p':
+							test = std::ctype_base::punct;
+							break;
+						case 'S':
+							neg = true;
+							PG_LEX_FALLTHROUGH;
+						case 's':
+							test = std::ctype_base::space;
+							break;
+						case 'U':
+							neg = true;
+							PG_LEX_FALLTHROUGH;
+						case 'u':
+							test = std::ctype_base::upper;
+							break;
+						case 'W':
+							neg = true;
+							PG_LEX_FALLTHROUGH;
+						case 'w':
+							test = std::ctype_base::alnum;
+							break;
+						case 'X':
+							neg = true;
+							PG_LEX_FALLTHROUGH;
+						case 'x':
+							test = std::ctype_base::xdigit;
+							break;
+						case 'Z':
+							neg = true;
+							PG_LEX_FALLTHROUGH;
+						case 'z': // Deprecated option
+							return (c == 0) != neg;
+						default:
+							return cl == c;
+					}
+					return ctype.is(test, c) != neg;
+				}
+
 				PatIter find_bracket_class_end(PatIter p) const
 				{
 					do
@@ -1071,158 +1305,6 @@ namespace pg
 			}
 		}
 
-		template <typename Iter>
-		struct pattern_iter
-		{
-			pattern_iter(const Iter begin, const Iter end)
-				: end(end)
-				, anchor(begin != end && *begin == '^')
-				, begin(anchor ? std::next(begin) : begin)
-			{
-				enum class capture_state { available, unfinished, finished };
-
-				int depth = 0;
-				capture_state captures[MAXCAPTURES] = {};
-				int capture_level = 0;
-
-				auto q = begin;
-				while(q != end)
-				{
-					switch(*q)
-					{
-						case '(':
-							if(capture_level > MAXCAPTURES) PG_LEX_UNLIKELY
-							{
-								throw lex_error(capture_too_many);
-							}
-							captures[capture_level++] = capture_state::unfinished;
-							++q;
-							++depth;
-							continue;
-
-						case ')':
-						{
-							auto level = capture_level;
-							while(--level >= 0)
-							{
-								if(captures[level] == capture_state::unfinished)
-								{
-									captures[level] = capture_state::finished;
-									break;
-								}
-							}
-							if(level < 0) PG_LEX_UNLIKELY
-							{
-								throw lex_error(capture_invalid_pattern);
-							}
-							++q;
-							++depth;
-							continue;
-						}
-
-						case '$':
-							++q;
-							continue;
-
-						case '%':
-							if(++q == end) PG_LEX_UNLIKELY
-							{
-								throw lex_error(pattern_ends_with_percent);
-							}
-							switch(*q)
-							{
-							case 'b':
-								if(std::distance(q, end) < 3) PG_LEX_UNLIKELY
-								{
-									throw lex_error(balanced_no_arguments);
-								}
-								std::advance(q, 3);
-								continue;
-
-							case 'f':
-								if(++q == end || *q != '[') PG_LEX_UNLIKELY
-								{
-									throw lex_error(frontier_no_open_bracket);
-								}
-								q = detail::find_bracket_class_end(q, end);
-								continue;
-
-							case '0': case '1': case '2': case '3': case '4':
-							case '5': case '6': case '7': case '8': case '9':
-								const int i = *q - '1';
-								if(i < 0 ||
-									i >= capture_level ||
-									captures[i] != capture_state::finished) PG_LEX_UNLIKELY
-								{
-									throw lex_error(capture_invalid_index);
-								}
-								++q;
-								continue;
-							}
-					}
-
-					if(q != end && *q == '[')
-					{
-						q = detail::find_bracket_class_end(q, end);
-					}
-					else
-					{
-						++q;
-					}
-					if(q != end && (*q == '*' || *q == '+' || *q == '?' || *q == '-'))
-					{
-						++q;
-					}
-
-					++depth;
-				}
-
-				if(std::any_of(captures, captures + capture_level,
-								 [](const auto cap){ return cap != capture_state::finished; })) PG_LEX_UNLIKELY
-				{
-					throw lex_error(capture_not_finished);
-				}
-
-				if(depth > MAXCCALLS) PG_LEX_UNLIKELY
-				{
-					throw lex_error(pattern_too_complex);
-				}
-			}
-
-			const Iter end;
-			const bool anchor;
-			const Iter begin;
-		};
-
-		template <class CharT>
-		struct pattern : public pattern_iter<const CharT*>
-		{
-			pattern(const CharT *p) : pattern_iter(p, p + std::char_traits<CharT>::length(p))
-			{
-			}
-
-			pattern(const CharT *p, size_t l) : pattern_iter(p, p + l)
-			{
-			}
-
-			template <size_t N>
-			pattern(const CharT(&p)[N]) : pattern_iter(std::begin(p), std::end(p))
-			{
-			}
-
-			template <typename Traits, typename Allocator>
-			pattern(const std::basic_string<CharT, Traits, Allocator> &s) : pattern_iter(&s[0], &s[0] + s.size())
-			{
-			}
-
-#if defined(__cpp_lib_string_view)
-			template <typename Traits>
-			pattern(const std::basic_string_view<CharT, Traits> &s) : pattern_iter(&s[0], &s[0] + s.size())
-			{
-			}
-#endif
-		};
-
 		/**
 		 * \brief A lex gmatch_context is an input string combined with a pattern.
 		 *
@@ -1295,7 +1377,7 @@ namespace pg
 			 */
 			gmatch_iterator& operator ++()
 			{
-				detail::match_state<StrCharT, PatCharT> ms(c.s.begin, c.s.end, c.p.end, mr);
+				detail::match_state<StrCharT, PatCharT> ms(c.s.begin, c.s.end, c.p, mr);
 
 				while(pos <= c.s.end)
 				{
@@ -1428,7 +1510,7 @@ namespace pg
 
 			basic_match_result<str_char_type> mr;
 			const auto c = gmatch_pat(std::forward<StrT>(str), pat);
-			detail::match_state<str_char_type, PatCharT> ms = { c.s.begin, c.s.end, c.p.end, mr };
+			detail::match_state<str_char_type, PatCharT> ms = { c.s.begin, c.s.end, c.p, mr };
 			const str_char_type * pos = c.s.begin;
 
 			do
@@ -1519,7 +1601,7 @@ namespace pg
 						const str_char_type * const match_end = c.s.begin + mr.position().second;
 						result.append(match_begin ,match_end);
 					}
-					else if(std::isdigit(cap_char)) // %n
+					else if(cap_char >= '0' && cap_char <= '9') // %n
 					{
 						const auto cap_index = static_cast<size_t>(cap_char - '1');
 						if(cap_index >= mr.size()) PG_LEX_UNLIKELY
