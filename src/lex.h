@@ -130,13 +130,13 @@ namespace pg
 
 				difference_type len() const
 				{
-					return second - first;
+					return std::distance(first, second);
 				}
 
 				void len(difference_type l)
 				{
 					assert(l >= 0);
-					second = first + l;
+					second = std::next(first, l);
 				}
 
 				void mark_unfinished() noexcept
@@ -381,12 +381,18 @@ namespace pg
 			 *
 			 * \note first and second are -1 when the match result doesn't contain match data.
 			 */
-			PG_LEX_NODISCARD const std::pair<difference_type, difference_type> &position() const noexcept { return pos; }
+			PG_LEX_NODISCARD const std::pair<difference_type, difference_type> &position() const noexcept
+			{
+				return pos;
+			}
 
 			/**
 			 * \brief Returns the length of the match.
 			 */
-			PG_LEX_NODISCARD size_t length() const noexcept { return pos.second - pos.first; }
+			PG_LEX_NODISCARD size_t length() const noexcept
+			{
+				return pos.second - pos.first;
+			}
 		};
 
 		template <class CharT>
@@ -463,7 +469,7 @@ namespace pg
 				{
 					if(*p == '%')
 					{
-						p += 2;
+						std::advance(p, 2);
 					}
 				}
 				while(*p++ != ']');
@@ -492,25 +498,25 @@ namespace pg
 						++p; // Skip escapes (e.g. '%]')
 						if(match_class(uc, *p))
 						{
-							return { p + 1, ret };
+							return {std::next(p), ret};
 						}
 					}
 					else
 					{
-						auto ec = p + 2;
-						if(*(p + 1) == '-' && ec != ms.p_end && *ec != ']')
+						PatIter ec = std::next(p, 2);
+						if(*std::next(p) == '-' && ec != ms.p_end && *ec != ']')
 						{
 							const auto min = static_cast<uchar_t>(*p);
 							const auto max = static_cast<uchar_t>(*ec);
 							if(min <= uc && uc <= max)
 							{
-								return {ec + 1, ret};
+								return {std::next(ec), ret};
 							}
 							p = ec;
 						}
 						else if(static_cast<uchar_t>(*p) == uc)
 						{
-							return {p + 1, ret};
+							return {std::next(p), ret};
 						}
 					}
 
@@ -531,10 +537,10 @@ namespace pg
 				switch(*p)
 				{
 					case '.':
-						return { p + 1, not_end }; // Matches any char
+						return {std::next(p), not_end}; // Matches any char
 
 					case '%':
-						return { p + 2, not_end && match_class(static_cast<uchar_t>(*s), *(p + 1)) };
+						return {std::next(p, 2), not_end && match_class(static_cast<uchar_t>(*s), *std::next(p))};
 
 					case '[':
 						if(not_end)
@@ -547,7 +553,7 @@ namespace pg
 						return {find_bracket_class_end(p), false};
 
 					default:
-						return {p + 1, not_end && static_cast<uchar_t>(*s) == static_cast<uchar_t>(*p)};
+						return {std::next(p), not_end && static_cast<uchar_t>(*s) == static_cast<uchar_t>(*p)};
 				}
 			}
 
@@ -562,7 +568,7 @@ namespace pg
 						return true; // Matches any char
 
 					case '%':
-						return match_class(static_cast<uchar_t>(c), *(p + 1));
+						return match_class(static_cast<uchar_t>(c), *std::next(p));
 
 					case '[':
 						return matchbracketclass(ms, c, p).second;
@@ -584,7 +590,7 @@ namespace pg
 				else
 				{
 					const auto b = static_cast<uchar_t>(*p);
-					const auto e = static_cast<uchar_t>(*(p + 1));
+					const auto e = static_cast<uchar_t>(*std::next(p));
 					int count = 1;
 					while(++s != ms.s_end)
 					{
@@ -609,14 +615,14 @@ namespace pg
 			pos_result_iter<StrIter> max_expand(match_state_iter<StrIter, PatIter> &ms, StrIter s, PatIter p, PatIter ep)
 			{
 				ptrdiff_t i = 0;
-				while((s + i) != ms.s_end && single_match(ms, *(s + i), p))
+				while(std::next(s, i) != ms.s_end && single_match(ms, *std::next(s, i), p))
 				{
 					++i;
 				}
 				// Keeps trying to match with the maximum repetitions
 				while(i >= 0)
 				{
-					auto res = match(ms, s + i, ep + 1);
+					auto res = match(ms, std::next(s, i), std::next(ep));
 					if(res.second)
 					{
 						return res;
@@ -624,7 +630,7 @@ namespace pg
 					--i;
 				}
 
-				return { s, false };
+				return {s, false};
 			}
 
 			template <typename StrIter, typename PatIter>
@@ -632,7 +638,7 @@ namespace pg
 			{
 				for(; ;)
 				{
-					auto res = match(ms, s, ep + 1);
+					auto res = match(ms, s, std::next(ep));
 					if(res.second)
 					{
 						return res;
@@ -681,10 +687,10 @@ namespace pg
 				int i = ms.level;
 				for(--i ; i >= 0 ; --i)
 				{
-					auto& cap = ms.captures[i];
+					detail::capture_iter<StrIter> &cap = ms.captures[i];
 					if(cap.is_unfinished())
 					{
-						cap.len(static_cast<int>(s - cap.init()));
+						cap.len(static_cast<int>(std::distance(cap.init(), s)));
 
 						auto res = match(ms, s, p);
 						if(!res.second)
@@ -696,7 +702,7 @@ namespace pg
 					}
 				}
 
-				return { s, false };
+				return {s, false};
 			}
 
 			template <typename StrIter, typename PatIter>
@@ -705,14 +711,14 @@ namespace pg
 				const int i = c - '1';
 				const int len = ms.captures[i].len();
 				StrIter c_begin = ms.captures[i].init();
-				StrIter c_end = c_begin + len;
-				if((ms.s_end - s) >= len &&
+				StrIter c_end = std::next(c_begin, len);
+				if(std::distance(s, ms.s_end) >= len &&
 					std::equal(c_begin, c_end, s))
 				{
-					return { s + len, true };
+					return {std::next(s, len), true};
 				}
 
-				return { s, false };
+				return {s, false};
 			}
 
 			template <typename StrIter, typename PatIter>
@@ -725,58 +731,58 @@ namespace pg
 					switch(*p)
 					{
 						case '(': // Start capture
-							return start_capture(ms, s, p + 1);
+							return start_capture(ms, s, std::next(p));
 
 						case ')': // End capture
-							return end_capture(ms, s, p + 1);
+							return end_capture(ms, s, std::next(p));
 
 						case '$':
-							if((p + 1) != ms.p_end) // Is the '$' the last char in pattern?
+							if(std::next(p) != ms.p_end) // Is the '$' the last char in pattern?
 							{
 								break;
 							}
-							return { s, s == ms.s_end };
+							return {s, s == ms.s_end};
 
 						case '%': // Escaped sequences not in the format class[*+?-]?
-							switch(*(p + 1))
+							switch(*std::next(p))
 							{
 								case 'b': // Balanced string?
 								{
-									auto res = matchbalance(ms, s, p + 2);
+									auto res = matchbalance(ms, s, std::next(p, 2));
 									if(res != ms.s_end)
 									{
-										s = res + 1;
-										p += 4;
+										s = std::next(res);
+										std::advance(p, 4);
 										continue;
 									}
 									return {s, false};
 								}
 
 								case 'f': // Frontier?
-									p += 2;
+									std::advance(p, 2);
 									if(matchbracketclass(ms, *s, p).second)
 									{
-										const StrCharT previous = (s == ms.s_begin) ? '\0' : *(s - 1);
+										const StrCharT previous = (s == ms.s_begin) ? '\0' : *std::prev(s);
 										PatIter ep;
 										bool res;
 										std::tie(ep, res) = matchbracketclass(ms, previous, p) ;
 										if(!res)
 										{
 											assert(*ep == ']');
-											p = ep + 1;
+											p = std::next(ep);
 											continue;
 										}
 									}
-									return { s, false };
+									return {s, false};
 
 								case '0': case '1': case '2': case '3': case '4':
 								case '5': case '6': case '7': case '8': case '9': // Capture results (%0-%9)?
 								{
-									auto res = match_capture(ms, s, *(p + 1));
+									auto res = match_capture(ms, s, *std::next(p));
 									if(res.second)
 									{
 										s = res.first;
-										p += 2;
+										std::advance(p, 2);
 										continue;
 									}
 									return {s, false};
@@ -802,7 +808,7 @@ namespace pg
 
 							default: // No suffix
 							{
-								auto res = match(ms, s + 1, ep);
+								auto res = match(ms, std::next(s), ep);
 								if(res.second)
 								{
 									return res;
@@ -812,7 +818,7 @@ namespace pg
 
 							case '?': // Optional
 							{
-								auto res = match(ms, s + 1, ep + 1);
+								auto res = match(ms, std::next(s), std::next(ep));
 								if(res.second)
 								{
 									return res;
@@ -822,13 +828,13 @@ namespace pg
 					}
 					else if(*ep != '*' && *ep != '?' && *ep != '-') // Accept empty?
 					{
-						return { s, false };
+						return {s, false};
 					}
 
-					p = ep + 1;
+					p = std::next(ep);
 				}
 
-				return { s, true };
+				return {s, true};
 			}
 
 			template <typename CharT>
@@ -923,7 +929,7 @@ namespace pg
 			pattern_iter(const Iter begin, const Iter end)
 				: end(end)
 				, anchor(begin != end && *begin == '^')
-				, begin(anchor ? begin + 1 : begin)
+				, begin(anchor ? std::next(begin) : begin)
 			{
 				enum class capture_state { available, unfinished, finished };
 
@@ -932,7 +938,7 @@ namespace pg
 				int capture_level = 0;
 
 				auto q = begin;
-				while(q < end)
+				while(q != end)
 				{
 					switch(*q)
 					{
@@ -978,15 +984,15 @@ namespace pg
 							switch(*q)
 							{
 							case 'b':
-								q += 3;
-								if(q > end) PG_LEX_UNLIKELY
+								if(std::distance(q, end) < 3) PG_LEX_UNLIKELY
 								{
 									throw lex_error(balanced_no_arguments);
 								}
+								std::advance(q, 3);
 								continue;
 
 							case 'f':
-								if(*(++q) != '[') PG_LEX_UNLIKELY
+								if(++q == end || *q != '[') PG_LEX_UNLIKELY
 								{
 									throw lex_error(frontier_no_open_bracket);
 								}
