@@ -109,80 +109,192 @@ namespace pg
 			template <typename, typename>
 			struct match_state_iter;
 
-			template <typename Iter>
-			struct capture_iter : public std::pair<Iter, Iter>
+			template <typename, typename>
+			struct matcher;
+
+			template<class I1, class I2>
+			struct char_comparer
 			{
-				using iterator = Iter;
-				using value_type = typename std::iterator_traits<Iter>::value_type;
-				using difference_type = typename std::iterator_traits<Iter>::difference_type;
-				using string_type = std::basic_string<value_type>;
+				using char_type = typename std::common_type<typename std::iterator_traits<I1>::value_type, typename std::iterator_traits<I2>::value_type>::type;
 
-				Iter init() const noexcept(std::is_nothrow_move_constructible<Iter>::value)
+				int operator()(I1 f1, I1 l1, I2 f2, I2 l2) const
 				{
-					assert(matched);
-					return first;
+					bool exhaust1 = (f1 == l1);
+					bool exhaust2 = (f2 == l2);
+					for(; !exhaust1 && !exhaust2; exhaust1 = (++f1 == l1), exhaust2 = (++f2 == l2))
+					{
+						char_type x1 = *f1;
+						char_type x2 = *f2;
+						int c = std::char_traits<char_type>::compare(&x1, &x2, 1);
+						if(c != 0)
+						{
+							return c;
+						}
+					}
+
+					return !exhaust1 ? 1 : !exhaust2 ? -1 : 0;
 				}
-
-				void init(Iter i) noexcept(std::is_nothrow_copy_assignable<Iter>::value)
-				{
-					first = i;
-				}
-
-				difference_type len() const
-				{
-					return std::distance(first, second);
-				}
-
-				void len(difference_type l)
-				{
-					assert(l >= 0);
-					second = std::next(first, l);
-				}
-
-				void mark_unfinished() noexcept
-				{
-					matched = false;
-				}
-
-				void mark_position() noexcept
-				{
-					matched = true;
-				}
-
-				bool is_unfinished() const noexcept
-				{
-					return matched;
-				}
-
-				Iter begin() const noexcept(std::is_nothrow_move_constructible<Iter>::value)
-				{
-					return first;
-				}
-
-				Iter end() const noexcept(std::is_nothrow_move_constructible<Iter>::value)
-				{
-					return second;
-				}
-
-#if defined(PG_LEX_TESTS)
-				operator string_type() const
-				{
-					assert(!is_unfinished());
-					return {first, second};
-				}
-
-				bool operator==(const string_type &str) const
-				{
-					return static_cast<string_type>(*this) == str;
-				}
-
-				Iter data() const noexcept { return init(); }
-				std::size_t size() const noexcept { return len(); }
-#endif
-
-				bool matched = false;
 			};
 
+			template<class C>
+			struct char_comparer<C*, C*>
+			{
+				int operator()(C *f1, C *l1, C *f2, C *l2) const
+				{
+					ptrdiff_t s1 = l1 - f1;
+					ptrdiff_t s2 = l2 - f2;
+					ptrdiff_t s = std::min(s1, s2);
+					int c = std::char_traits<C>::compare(f1, f2, s);
+					if(c != 0)
+					{
+						return c;
+					}
+
+					return s1 > s2 ? 1 : s1 < s2 ? -1 : 0;
+				}
+			};
+
+			template<class I1, class I2>
+			int char_compare(I1 f1, I1 l1, I2 f2, I2 l2)
+			{
+				return char_comparer<I1, I2>()(f1, l1, f2, l2);
+			}
+		}
+
+		template <typename Iter>
+		struct capture_iter : public std::pair<Iter, Iter>
+		{
+			using iterator = Iter;
+			using value_type = typename std::iterator_traits<Iter>::value_type;
+			using difference_type = typename std::iterator_traits<Iter>::difference_type;
+			using string_type = std::basic_string<value_type>;
+
+		private:
+			template <typename, typename>
+			friend struct detail::match_state_iter;
+
+			template <typename, typename>
+			friend struct detail::matcher;
+
+			Iter init() const noexcept(std::is_nothrow_move_constructible<Iter>::value)
+			{
+				assert(matched);
+				return first;
+			}
+
+			void init(Iter i) noexcept(std::is_nothrow_copy_assignable<Iter>::value)
+			{
+				first = i;
+			}
+
+			difference_type len() const
+			{
+				return std::distance(first, second);
+			}
+
+			void len(difference_type l)
+			{
+				assert(l >= 0);
+				second = std::next(first, l);
+			}
+
+			void mark_unfinished() noexcept
+			{
+				matched = false;
+			}
+
+			void mark_position() noexcept
+			{
+				matched = true;
+			}
+
+			bool is_unfinished() const noexcept
+			{
+				return matched;
+			}
+
+			Iter begin() const noexcept(std::is_nothrow_move_constructible<Iter>::value)
+			{
+				return first;
+			}
+
+			Iter end() const noexcept(std::is_nothrow_move_constructible<Iter>::value)
+			{
+				return second;
+			}
+
+		public:
+			string_type str() const
+			{
+				if(is_unfinished()) return {};
+				return {first, second};
+			}
+
+			operator string_type() const
+			{
+				return str();
+			}
+
+			template <typename It>
+			int compare(It begin, It end) const
+			{
+				if(is_unfinished())
+				{
+					return detail::char_compare(begin, begin, begin, end);
+				}
+				return detail::char_compare(first, second, begin, end);
+			}
+
+			template <typename It>
+			int compare(const capture_iter<It> &m) const
+			{
+				if(m.is_unfinished())
+				{
+					if(is_unfinished())
+					{
+						return 0;
+					}
+					return compare(first, first);
+				}
+				return compare(m.first, m.second);
+			}
+
+			int compare(const string_type &s) const
+			{
+				return compare(s.begin(), s.end());
+			}
+
+			int compare(const value_type *c) const
+			{
+				return compare(c, c + std::char_traits<value_type>::length(c));
+			}
+
+			template <typename It>
+			bool operator==(const capture_iter<It> &o) const
+			{
+				return compare(o) == 0;
+			}
+
+			bool operator==(const string_type &o) const
+			{
+				return compare(o) == 0;
+			}
+
+			bool operator==(const value_type *o) const
+			{
+				return compare(o) == 0;
+			}
+
+#if defined(PG_LEX_TESTS)
+			Iter data() const noexcept { return init(); }
+			std::size_t size() const noexcept { return len(); }
+#endif
+
+			bool matched = false;
+		};
+
+		namespace detail
+		{
 			template <typename Iter>
 			struct captures_iter
 			{
@@ -308,10 +420,10 @@ namespace pg
 		template <typename Iter>
 		struct basic_match_result_iter
 		{
-			using value_type = detail::capture_iter<Iter>;
+			using value_type = capture_iter<Iter>;
 			using const_reference = const value_type&;
 			using reference = value_type&;
-			using const_iterator = const detail::capture_iter<Iter>*;
+			using const_iterator = const capture_iter<Iter>*;
 			using iterator = const_iterator;
 			using difference_type = typename std::iterator_traits<Iter>::difference_type;
 			using char_type = typename std::iterator_traits<Iter>::value_type;
@@ -444,6 +556,12 @@ namespace pg
 					pos = { -1, -1 };
 				}
 
+				void finish_capture(int level, StrIter pos, difference_type len)
+				{
+					captures[level].init(pos);
+					captures[level].len(len);
+				}
+
 				StrIter const s_begin;
 				StrIter const s_end;
 				PatIter const p_end;
@@ -457,388 +575,384 @@ namespace pg
 			template <typename StrCharT, typename PatCharT>
 			using match_state = match_state_iter<const StrCharT*, const PatCharT*>;
 
-			template <typename StrIter, typename PatIter>
-			pos_result_iter<StrIter> match(match_state_iter<StrIter, PatIter> &ms, StrIter s, PatIter p);
-
 			bool match_class(int c, int cl) noexcept;
 
-			template <typename PatIter>
-			PatIter find_bracket_class_end(PatIter p)
-			{
-				do
-				{
-					if(*p == '%')
-					{
-						std::advance(p, 2);
-					}
-				}
-				while(*p++ != ']');
-
-				return p;
-			}
-
 			template <typename StrIter, typename PatIter>
-			pos_result_iter<PatIter> matchbracketclass(const match_state_iter<StrIter, PatIter> &ms, const typename std::iterator_traits<StrIter>::value_type c, PatIter p)
+			struct matcher
 			{
-				using uchar_t = typename common_unsigned_char_iter<StrIter, PatIter>::type;
-
-				const uchar_t uc = static_cast<uchar_t>(c);
-
-				bool ret = true;
-				if(*(++p) == '^')
+				static PatIter find_bracket_class_end(PatIter p)
 				{
-					ret = false;
-					++p; // Skip the '^'
-				}
-
-				do
-				{
-					if(*p == '%')
+					do
 					{
-						++p; // Skip escapes (e.g. '%]')
-						if(match_class(uc, *p))
+						if(*p == '%')
 						{
-							return {std::next(p), ret};
+							std::advance(p, 2);
 						}
 					}
-					else
+					while(*p++ != ']');
+
+					return p;
+				}
+
+				static pos_result_iter<PatIter> matchbracketclass(const match_state_iter<StrIter, PatIter> &ms, const typename std::iterator_traits<StrIter>::value_type c, PatIter p)
+				{
+					using uchar_t = typename common_unsigned_char_iter<StrIter, PatIter>::type;
+
+					const uchar_t uc = static_cast<uchar_t>(c);
+
+					bool ret = true;
+					if(*(++p) == '^')
 					{
-						PatIter ec = std::next(p, 2);
-						if(*std::next(p) == '-' && ec != ms.p_end && *ec != ']')
+						ret = false;
+						++p; // Skip the '^'
+					}
+
+					do
+					{
+						if(*p == '%')
 						{
-							const auto min = static_cast<uchar_t>(*p);
-							const auto max = static_cast<uchar_t>(*ec);
-							if(min <= uc && uc <= max)
+							++p; // Skip escapes (e.g. '%]')
+							if(match_class(uc, *p))
 							{
-								return {std::next(ec), ret};
-							}
-							p = ec;
-						}
-						else if(static_cast<uchar_t>(*p) == uc)
-						{
-							return {std::next(p), ret};
-						}
-					}
-
-					++p;
-				}
-				while(*p != ']');
-
-				return {p, !ret};
-			}
-
-			template <typename StrIter, typename PatIter>
-			pos_result_iter<PatIter> single_match_pr(const match_state_iter<StrIter, PatIter> &ms, StrIter s, PatIter p)
-			{
-				using uchar_t = typename common_unsigned_char_iter<StrIter, PatIter>::type;
-
-				const bool not_end = s != ms.s_end;
-
-				switch(*p)
-				{
-					case '.':
-						return {std::next(p), not_end}; // Matches any char
-
-					case '%':
-						return {std::next(p, 2), not_end && match_class(static_cast<uchar_t>(*s), *std::next(p))};
-
-					case '[':
-						if(not_end)
-						{
-							PatIter ep;
-							bool res;
-							std::tie(ep, res) = matchbracketclass(ms, *s, p);
-							return {find_bracket_class_end(ep), res};
-						}
-						return {find_bracket_class_end(p), false};
-
-					default:
-						return {std::next(p), not_end && static_cast<uchar_t>(*s) == static_cast<uchar_t>(*p)};
-				}
-			}
-
-			template <typename StrIter, typename PatIter>
-			bool single_match(const match_state_iter<StrIter, PatIter> &ms, const typename std::iterator_traits<StrIter>::value_type c, PatIter p)
-			{
-				using uchar_t = typename common_unsigned_char_iter<StrIter, PatIter>::type;
-
-				switch(*p)
-				{
-					case '.':
-						return true; // Matches any char
-
-					case '%':
-						return match_class(static_cast<uchar_t>(c), *std::next(p));
-
-					case '[':
-						return matchbracketclass(ms, c, p).second;
-
-					default:
-						return static_cast<uchar_t>(*p) == static_cast<uchar_t>(c);
-				}
-			}
-
-			template <typename StrIter, typename PatIter>
-			StrIter matchbalance(const match_state_iter<StrIter, PatIter> &ms, StrIter s, PatIter p)
-			{
-				using uchar_t = typename common_unsigned_char_iter<StrIter, PatIter>::type;
-
-				if(static_cast<uchar_t>(*s) != static_cast<uchar_t>(*p))
-				{
-					return ms.s_end;
-				}
-				else
-				{
-					const auto b = static_cast<uchar_t>(*p);
-					const auto e = static_cast<uchar_t>(*std::next(p));
-					int count = 1;
-					while(++s != ms.s_end)
-					{
-						const auto uc = static_cast<uchar_t>(*s);
-						if(uc == e)
-						{
-							if(--count == 0)
-							{
-								return s;
+								return {std::next(p), ret};
 							}
 						}
-						else if(uc == b)
+						else
 						{
-						  ++count;
+							PatIter ec = std::next(p, 2);
+							if(*std::next(p) == '-' && ec != ms.p_end && *ec != ']')
+							{
+								const auto min = static_cast<uchar_t>(*p);
+								const auto max = static_cast<uchar_t>(*ec);
+								if(min <= uc && uc <= max)
+								{
+									return {std::next(ec), ret};
+								}
+								p = ec;
+							}
+							else if(static_cast<uchar_t>(*p) == uc)
+							{
+								return {std::next(p), ret};
+							}
 						}
+
+						++p;
 					}
-				}
-				return ms.s_end;
-			}
+					while(*p != ']');
 
-			template <typename StrIter, typename PatIter>
-			pos_result_iter<StrIter> max_expand(match_state_iter<StrIter, PatIter> &ms, StrIter s, PatIter p, PatIter ep)
-			{
-				StrIter n = s;
-				while(n != ms.s_end && single_match(ms, *n, p))
-				{
-					++n;
-				}
-				// Keeps trying to match with the maximum repetitions
-				while(true)
-				{
-					auto res = match(ms, n, std::next(ep));
-					if(res.second)
-					{
-						return res;
-					}
-					if(n == s)
-					{
-						break;
-					}
-					--n;
+					return {p, !ret};
 				}
 
-				return {s, false};
-			}
-
-			template <typename StrIter, typename PatIter>
-			pos_result_iter<StrIter> min_expand(match_state_iter<StrIter, PatIter> &ms, StrIter s, PatIter p, PatIter ep)
-			{
-				for(; ;)
+				static pos_result_iter<PatIter> single_match_pr(const match_state_iter<StrIter, PatIter> &ms, StrIter s, PatIter p)
 				{
-					auto res = match(ms, s, std::next(ep));
-					if(res.second)
-					{
-						return res;
-					}
-					else if(s != ms.s_end && single_match(ms, *s, p))
-					{
-						++s;
-					}
-					else
-					{
-						return {s, false};
-					}
-				}
-			}
+					using uchar_t = typename common_unsigned_char_iter<StrIter, PatIter>::type;
 
-			template <typename StrIter, typename PatIter>
-			pos_result_iter<StrIter> start_capture(match_state_iter<StrIter, PatIter> &ms, StrIter s, PatIter p)
-			{
-				ms.captures[ms.level].init(s);
+					const bool not_end = s != ms.s_end;
 
-				if(*p == ')')
-				{
-					ms.captures[ms.level].mark_position();
-					++p;
-				}
-				else
-				{
-					ms.captures[ms.level].mark_unfinished();
-				}
-
-				++ms.level;
-
-				auto res = match(ms, s, p);
-				if(!res.second)
-				{
-					// Undo capture when the match has failed
-					--ms.level;
-					ms.captures[ms.level].mark_unfinished();
-				}
-				return res;
-			}
-
-			template <typename StrIter, typename PatIter>
-			pos_result_iter<StrIter> end_capture(match_state_iter<StrIter, PatIter> &ms, StrIter s, PatIter p)
-			{
-				int i = ms.level;
-				for(--i ; i >= 0 ; --i)
-				{
-					detail::capture_iter<StrIter> &cap = ms.captures[i];
-					if(cap.is_unfinished())
-					{
-						cap.len(static_cast<int>(std::distance(cap.init(), s)));
-
-						auto res = match(ms, s, p);
-						if(!res.second)
-						{
-							// Undo capture when the match has failed
-							cap.mark_unfinished();
-						}
-						return res;
-					}
-				}
-
-				return {s, false};
-			}
-
-			template <typename StrIter, typename PatIter>
-			pos_result_iter<StrIter> match_capture(match_state_iter<StrIter, PatIter> &ms, StrIter s, typename std::iterator_traits<PatIter>::value_type c)
-			{
-				const int i = c - '1';
-				const int len = ms.captures[i].len();
-				StrIter c_begin = ms.captures[i].init();
-				StrIter c_end = std::next(c_begin, len);
-				if(std::distance(s, ms.s_end) >= len &&
-					std::equal(c_begin, c_end, s))
-				{
-					return {std::next(s, len), true};
-				}
-
-				return {s, false};
-			}
-
-			template <typename StrIter, typename PatIter>
-			pos_result_iter<StrIter> match(match_state_iter<StrIter, PatIter> &ms, StrIter s, PatIter p)
-			{
-				using StrCharT = typename std::iterator_traits<StrIter>::value_type;
-
-				while(p != ms.p_end)
-				{
 					switch(*p)
 					{
-						case '(': // Start capture
-							return start_capture(ms, s, std::next(p));
+						case '.':
+							return {std::next(p), not_end}; // Matches any char
 
-						case ')': // End capture
-							return end_capture(ms, s, std::next(p));
+						case '%':
+							return {std::next(p, 2), not_end && match_class(static_cast<uchar_t>(*s), *std::next(p))};
 
-						case '$':
-							if(std::next(p) != ms.p_end) // Is the '$' the last char in pattern?
+						case '[':
+							if(not_end)
 							{
-								break;
+								PatIter ep;
+								bool res;
+								std::tie(ep, res) = matchbracketclass(ms, *s, p);
+								return {find_bracket_class_end(ep), res};
 							}
-							return {s, s == ms.s_end};
+							return {find_bracket_class_end(p), false};
 
-						case '%': // Escaped sequences not in the format class[*+?-]?
-							switch(*std::next(p))
-							{
-								case 'b': // Balanced string?
-								{
-									auto res = matchbalance(ms, s, std::next(p, 2));
-									if(res != ms.s_end)
-									{
-										s = std::next(res);
-										std::advance(p, 4);
-										continue;
-									}
-									return {s, false};
-								}
-
-								case 'f': // Frontier?
-									std::advance(p, 2);
-									if(matchbracketclass(ms, *s, p).second)
-									{
-										const StrCharT previous = (s == ms.s_begin) ? '\0' : *std::prev(s);
-										PatIter ep;
-										bool res;
-										std::tie(ep, res) = matchbracketclass(ms, previous, p) ;
-										if(!res)
-										{
-											assert(*ep == ']');
-											p = std::next(ep);
-											continue;
-										}
-									}
-									return {s, false};
-
-								case '0': case '1': case '2': case '3': case '4':
-								case '5': case '6': case '7': case '8': case '9': // Capture results (%0-%9)?
-								{
-									auto res = match_capture(ms, s, *std::next(p));
-									if(res.second)
-									{
-										s = res.first;
-										std::advance(p, 2);
-										continue;
-									}
-									return {s, false};
-								}
-							}
+						default:
+							return {std::next(p), not_end && static_cast<uchar_t>(*s) == static_cast<uchar_t>(*p)};
 					}
+				}
 
-					PatIter ep;
-					bool r;
-					std::tie(ep, r) = single_match_pr(ms, s, p);
-					if(r)
+				static bool single_match(const match_state_iter<StrIter, PatIter> &ms, const typename std::iterator_traits<StrIter>::value_type c, PatIter p)
+				{
+					using uchar_t = typename common_unsigned_char_iter<StrIter, PatIter>::type;
+
+					switch(*p)
 					{
-						switch(*ep) // Handle optional suffix
+						case '.':
+							return true; // Matches any char
+
+						case '%':
+							return match_class(static_cast<uchar_t>(c), *std::next(p));
+
+						case '[':
+							return matchbracketclass(ms, c, p).second;
+
+						default:
+							return static_cast<uchar_t>(*p) == static_cast<uchar_t>(c);
+					}
+				}
+
+				static StrIter matchbalance(const match_state_iter<StrIter, PatIter> &ms, StrIter s, PatIter p)
+				{
+					using uchar_t = typename common_unsigned_char_iter<StrIter, PatIter>::type;
+
+					if(static_cast<uchar_t>(*s) != static_cast<uchar_t>(*p))
+					{
+						return ms.s_end;
+					}
+					else
+					{
+						const auto b = static_cast<uchar_t>(*p);
+						const auto e = static_cast<uchar_t>(*std::next(p));
+						int count = 1;
+						while(++s != ms.s_end)
 						{
-							case '+': // 1 or more repetitions
-								++s; // 1 match already done
-								PG_LEX_FALLTHROUGH;
-							case '*': // 0 or more repetitions
-								return max_expand(ms, s, p, ep);
-
-							case '-': // 0 or more repetitions (minimum)
-								return min_expand(ms, s, p, ep);
-
-							default: // No suffix
+							const auto uc = static_cast<uchar_t>(*s);
+							if(uc == e)
 							{
-								auto res = match(ms, std::next(s), ep);
-								if(res.second)
+								if(--count == 0)
 								{
-									return res;
+									return s;
 								}
-								return {s, false};
 							}
-
-							case '?': // Optional
+							else if(uc == b)
 							{
-								auto res = match(ms, std::next(s), std::next(ep));
-								if(res.second)
-								{
-									return res;
-								}
+							  ++count;
 							}
 						}
 					}
-					else if(*ep != '*' && *ep != '?' && *ep != '-') // Accept empty?
-					{
-						return {s, false};
-					}
-
-					p = std::next(ep);
+					return ms.s_end;
 				}
 
-				return {s, true};
+				static pos_result_iter<StrIter> max_expand(match_state_iter<StrIter, PatIter> &ms, StrIter s, PatIter p, PatIter ep)
+				{
+					StrIter n = s;
+					while(n != ms.s_end && single_match(ms, *n, p))
+					{
+						++n;
+					}
+					// Keeps trying to match with the maximum repetitions
+					while(true)
+					{
+						auto res = match(ms, n, std::next(ep));
+						if(res.second)
+						{
+							return res;
+						}
+						if(n == s)
+						{
+							break;
+						}
+						--n;
+					}
+
+					return {s, false};
+				}
+
+				static pos_result_iter<StrIter> min_expand(match_state_iter<StrIter, PatIter> &ms, StrIter s, PatIter p, PatIter ep)
+				{
+					for(; ;)
+					{
+						auto res = match(ms, s, std::next(ep));
+						if(res.second)
+						{
+							return res;
+						}
+						else if(s != ms.s_end && single_match(ms, *s, p))
+						{
+							++s;
+						}
+						else
+						{
+							return {s, false};
+						}
+					}
+				}
+
+				static pos_result_iter<StrIter> start_capture(match_state_iter<StrIter, PatIter> &ms, StrIter s, PatIter p)
+				{
+					ms.captures[ms.level].init(s);
+
+					if(*p == ')')
+					{
+						ms.captures[ms.level].mark_position();
+						++p;
+					}
+					else
+					{
+						ms.captures[ms.level].mark_unfinished();
+					}
+
+					++ms.level;
+
+					auto res = match(ms, s, p);
+					if(!res.second)
+					{
+						// Undo capture when the match has failed
+						--ms.level;
+						ms.captures[ms.level].mark_unfinished();
+					}
+					return res;
+				}
+
+				static pos_result_iter<StrIter> end_capture(match_state_iter<StrIter, PatIter> &ms, StrIter s, PatIter p)
+				{
+					int i = ms.level;
+					for(--i ; i >= 0 ; --i)
+					{
+						capture_iter<StrIter> &cap = ms.captures[i];
+						if(cap.is_unfinished())
+						{
+							cap.len(static_cast<int>(std::distance(cap.init(), s)));
+
+							auto res = match(ms, s, p);
+							if(!res.second)
+							{
+								// Undo capture when the match has failed
+								cap.mark_unfinished();
+							}
+							return res;
+						}
+					}
+
+					return {s, false};
+				}
+
+				static pos_result_iter<StrIter> match_capture(match_state_iter<StrIter, PatIter> &ms, StrIter s, typename std::iterator_traits<PatIter>::value_type c)
+				{
+					const int i = c - '1';
+					const int len = ms.captures[i].len();
+					StrIter c_begin = ms.captures[i].init();
+					StrIter c_end = std::next(c_begin, len);
+					if(std::distance(s, ms.s_end) >= len &&
+						std::equal(c_begin, c_end, s))
+					{
+						return {std::next(s, len), true};
+					}
+
+					return {s, false};
+				}
+
+				static pos_result_iter<StrIter> match(match_state_iter<StrIter, PatIter> &ms, StrIter s, PatIter p)
+				{
+					using StrCharT = typename std::iterator_traits<StrIter>::value_type;
+
+					while(p != ms.p_end)
+					{
+						switch(*p)
+						{
+							case '(': // Start capture
+								return start_capture(ms, s, std::next(p));
+
+							case ')': // End capture
+								return end_capture(ms, s, std::next(p));
+
+							case '$':
+								if(std::next(p) != ms.p_end) // Is the '$' the last char in pattern?
+								{
+									break;
+								}
+								return {s, s == ms.s_end};
+
+							case '%': // Escaped sequences not in the format class[*+?-]?
+								switch(*std::next(p))
+								{
+									case 'b': // Balanced string?
+									{
+										auto res = matchbalance(ms, s, std::next(p, 2));
+										if(res != ms.s_end)
+										{
+											s = std::next(res);
+											std::advance(p, 4);
+											continue;
+										}
+										return {s, false};
+									}
+
+									case 'f': // Frontier?
+										std::advance(p, 2);
+										if(matchbracketclass(ms, *s, p).second)
+										{
+											const StrCharT previous = (s == ms.s_begin) ? '\0' : *std::prev(s);
+											PatIter ep;
+											bool res;
+											std::tie(ep, res) = matchbracketclass(ms, previous, p) ;
+											if(!res)
+											{
+												assert(*ep == ']');
+												p = std::next(ep);
+												continue;
+											}
+										}
+										return {s, false};
+
+									case '0': case '1': case '2': case '3': case '4':
+									case '5': case '6': case '7': case '8': case '9': // Capture results (%0-%9)?
+									{
+										auto res = match_capture(ms, s, *std::next(p));
+										if(res.second)
+										{
+											s = res.first;
+											std::advance(p, 2);
+											continue;
+										}
+										return {s, false};
+									}
+								}
+						}
+
+						PatIter ep;
+						bool r;
+						std::tie(ep, r) = single_match_pr(ms, s, p);
+						if(r)
+						{
+							switch(*ep) // Handle optional suffix
+							{
+								case '+': // 1 or more repetitions
+									++s; // 1 match already done
+									PG_LEX_FALLTHROUGH;
+								case '*': // 0 or more repetitions
+									return max_expand(ms, s, p, ep);
+
+								case '-': // 0 or more repetitions (minimum)
+									return min_expand(ms, s, p, ep);
+
+								default: // No suffix
+								{
+									auto res = match(ms, std::next(s), ep);
+									if(res.second)
+									{
+										return res;
+									}
+									return {s, false};
+								}
+
+								case '?': // Optional
+								{
+									auto res = match(ms, std::next(s), std::next(ep));
+									if(res.second)
+									{
+										return res;
+									}
+								}
+							}
+						}
+						else if(*ep != '*' && *ep != '?' && *ep != '-') // Accept empty?
+						{
+							return {s, false};
+						}
+
+						p = std::next(ep);
+					}
+
+					return {s, true};
+				}
+			};
+
+			template <typename StrIter, typename PatIter>
+			static pos_result_iter<StrIter> match(match_state_iter<StrIter, PatIter> &ms, StrIter s, PatIter p)
+			{
+				return matcher<StrIter, PatIter>::match(ms, s, p);
 			}
 
 			template <typename CharT>
@@ -1168,8 +1282,7 @@ namespace pg
 						ms.pos = { static_cast<int>(pos - c.s.begin), static_cast<int>(e - c.s.begin) };
 						if(ms.level == 0)
 						{
-							ms.captures[ms.level].init(pos);
-							ms.captures[ms.level].len(static_cast<int>(e - pos));
+							ms.finish_capture(ms.level, pos, static_cast<int>(e - pos));
 							++ms.level;
 						}
 						last_match = e;
@@ -1298,8 +1411,7 @@ namespace pg
 					ms.pos = { static_cast<int>(pos - c.s.begin), static_cast<int>(e - c.s.begin) };
 					if(ms.level == 0)
 					{
-						ms.captures[ms.level].init(pos);
-						ms.captures[ms.level].len(static_cast<int>(e - pos));
+						ms.finish_capture(ms.level, pos, static_cast<int>(e - pos));
 						++ms.level;
 					}
 
