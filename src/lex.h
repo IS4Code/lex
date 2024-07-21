@@ -61,13 +61,13 @@
 #endif
 
 // Maximum recursion depth for 'match'
-#if !defined(MAXCCALLS)
-#define MAXCCALLS 200
+#if !defined(PG_LEX_MAXCCALLS)
+#define PG_LEX_MAXCCALLS 200
 #endif
 
 // Maximum number of captures that a pattern can do during pattern-matching.
-#if !defined(MAXCAPTURES)
-#define MAXCAPTURES 32
+#if !defined(PG_LEX_MAXCAPTURES)
+#define PG_LEX_MAXCAPTURES 32
 #endif
 
 namespace pg
@@ -344,7 +344,7 @@ namespace pg
 				{
 					if(other.alloc)
 					{
-						alloc = std::make_unique<std::array<capture_iter<Iter>, MAXCAPTURES>>(*other.alloc);
+						alloc = std::make_unique<std::array<capture_iter<Iter>, PG_LEX_MAXCAPTURES>>(*other.alloc);
 						local = {};
 					}
 					else
@@ -380,7 +380,7 @@ namespace pg
 					}
 					else if(idx >= max_local)
 					{
-						alloc = std::make_unique<std::array<capture_iter<Iter>, MAXCAPTURES>>();
+						alloc = std::make_unique<std::array<capture_iter<Iter>, PG_LEX_MAXCAPTURES>>();
 						std::copy(local.begin(), local.end(), alloc->begin());
 						return (*alloc)[idx];
 					}
@@ -401,9 +401,9 @@ namespace pg
 			private:
 				static constexpr int max_local = 2;
 				std::array<capture_iter<Iter>, max_local> local;
-				std::unique_ptr<std::array<capture_iter<Iter>, MAXCAPTURES>> alloc;
+				std::unique_ptr<std::array<capture_iter<Iter>, PG_LEX_MAXCAPTURES>> alloc;
 
-				static_assert(MAXCAPTURES > max_local, "MAXCAPTURES must be greater than 2");
+				static_assert(PG_LEX_MAXCAPTURES > max_local, "PG_LEX_MAXCAPTURES must be greater than 2");
 			};
 		}
 
@@ -564,7 +564,7 @@ namespace pg
 				enum class capture_state { available, unfinished, finished };
 
 				int depth = 0;
-				capture_state captures[MAXCAPTURES] = {};
+				capture_state captures[PG_LEX_MAXCAPTURES] = {};
 				int capture_level = 0;
 
 				auto q = begin;
@@ -573,7 +573,7 @@ namespace pg
 					switch(*q)
 					{
 						case '(':
-							if(capture_level > MAXCAPTURES) PG_LEX_UNLIKELY
+							if(capture_level > PG_LEX_MAXCAPTURES) PG_LEX_UNLIKELY
 							{
 								throw lex_error(capture_too_many);
 							}
@@ -665,7 +665,7 @@ namespace pg
 					throw lex_error(capture_not_finished);
 				}
 
-				if(depth > MAXCCALLS) PG_LEX_UNLIKELY
+				if(depth > PG_LEX_MAXCCALLS) PG_LEX_UNLIKELY
 				{
 					throw lex_error(pattern_too_complex);
 				}
@@ -734,7 +734,7 @@ namespace pg
 
 				void reprepstate() noexcept
 				{
-					assert(matchdepth == MAXCCALLS);
+					assert(matchdepth == PG_LEX_MAXCCALLS);
 
 					level = 0;
 					pos = { -1, -1 };
@@ -750,7 +750,7 @@ namespace pg
 				StrIter const s_end;
 				const pattern_iter<PatIter> &p;
 				PatIter const p_end;
-				int matchdepth = MAXCCALLS; // Control for recursive depth (to avoid stack overflow)
+				int matchdepth = PG_LEX_MAXCCALLS; // Control for recursive depth (to avoid stack overflow)
 
 				int &level; // Total number of captures (finished or unfinished)
 				detail::captures_iter<StrIter> &captures;
