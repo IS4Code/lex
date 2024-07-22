@@ -411,6 +411,11 @@ namespace pg
 				return compare(c, c + std::char_traits<value_type>::length(c));
 			}
 
+			difference_type length() const
+			{
+				return std::distance(first, second);
+			}
+
 			template <typename It>
 			bool operator==(const capture_iter<It> &o) const
 			{
@@ -443,7 +448,11 @@ namespace pg
 				using char_type = typename std::iterator_traits<Iter>::value_type;
 				using string_type = typename std::basic_string<char_type>;
 
-				captures_iter() noexcept = default;
+				captures_iter() noexcept(std::is_nothrow_default_constructible<Iter>::value)
+					: local()
+				{
+
+				}
 
 				captures_iter(const captures_iter &other) noexcept(std::is_nothrow_copy_assignable<Iter>::value)
 				{
@@ -580,6 +589,11 @@ namespace pg
 			detail::captures_iter<Iter> captures;
 
 		public:
+			basic_match_result_iter() : captures()
+			{
+
+			}
+
 			/**
 			 * \brief Returns an iterator to the begin of the capture list.
 			 */
@@ -597,12 +611,33 @@ namespace pg
 			}
 
 			/**
+			 * \brief Returns an iterator to the begin of the capture list.
+			 */
+			PG_LEX_NODISCARD const_iterator cbegin() const noexcept(std::is_nothrow_move_constructible<const_iterator>::value)
+			{
+				return captures.data();
+			}
+
+			/**
+			 * \brief Returns an iterator to the end of the capture list.
+			 */
+			PG_LEX_NODISCARD const_iterator cend() const noexcept(std::is_nothrow_move_constructible<const_iterator>::value)
+			{
+				return captures.data() + size();
+			}
+
+			/**
 			 * \brief Returns the number of captures.
 			 */
 			PG_LEX_NODISCARD size_t size() const noexcept
 			{
 				assert(level >= 0);
 				return level;
+			}
+
+			PG_LEX_NODISCARD constexpr size_t max_size() const noexcept
+			{
+				return PG_LEX_MAXCAPTURES;
 			}
 
 			/**
@@ -625,6 +660,11 @@ namespace pg
 					throw lex_error(capture_out_of_range);
 				}
 
+				return captures[i];
+			}
+
+			PG_LEX_NODISCARD const_reference operator[](size_t i) const noexcept
+			{
 				return captures[i];
 			}
 
@@ -669,6 +709,7 @@ namespace pg
 			Iter end;
 			bool anchor;
 			Iter begin;
+			int capture_level = 0;
 
 			Traits traits;
 
@@ -681,7 +722,6 @@ namespace pg
 
 				int depth = 0;
 				capture_state captures[PG_LEX_MAXCAPTURES] = {};
-				int capture_level = 0;
 
 				auto q = begin;
 				while(q != end)
@@ -785,6 +825,11 @@ namespace pg
 				{
 					throw lex_error(pattern_too_complex);
 				}
+			}
+
+			int mark_count() const noexcept
+			{
+				return capture_level;
 			}
 
 			locale_type imbue(locale_type loc)
@@ -1346,6 +1391,43 @@ namespace pg
 				}
 #endif
 			};
+		}
+
+		template <typename StrIter, typename PatIter, PG_LEX_SYNTAX_PARAMS(PatIter)>
+		bool search(StrIter begin, StrIter end, basic_match_result_iter<StrIter> &mr, const pattern_iter<PatIter, PG_LEX_SYNTAX_ARGS(PatIter)> &pattern)
+		{
+			using str_char_type = typename std::iterator_traits<StrIter>::value_type;
+
+			detail::match_state_iter<StrIter, PatIter, PG_LEX_SYNTAX_ARGS(PatIter)> ms = { begin, end, pattern, mr };
+			if(ms.level == 0)
+			{
+				++ms.level;
+			}
+
+			StrIter pos = begin;
+
+			do
+			{
+				auto result = detail::match(ms, pos, pattern.begin);
+				if(result.second)
+				{
+					ms.pos = {std::distance(begin, pos), std::distance(begin, result.first)};
+					ms.finish_capture(0, pos, std::distance(pos, result.first));
+
+					return true;
+				}
+				else
+				{
+					if(pos == end)
+					{
+						break;
+					}
+					pos = std::next(result.first);
+				}
+			}
+			while(pos != end && !pattern.anchor);
+
+			return false;
 		}
 
 		/**
