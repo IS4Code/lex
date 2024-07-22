@@ -1490,14 +1490,14 @@ namespace pg
 				}
 				else
 				{
-					if(pos == end)
+					if(pos == end || result.first == end)
 					{
 						break;
 					}
 					pos = std::next(result.first);
 				}
 			}
-			while(pos != end && !only_first && !pattern.anchor);
+			while(!only_first && !pattern.anchor);
 
 			return false;
 		}
