@@ -702,6 +702,14 @@ namespace pg
 			{
 				return pos.second - pos.first;
 			}
+
+			void truncate() noexcept
+			{
+				if(level > 1)
+				{
+					level = 1;
+				}
+			}
 		};
 
 		template <class CharT>
