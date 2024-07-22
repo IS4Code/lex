@@ -70,14 +70,125 @@
 #define PG_LEX_MAXCAPTURES 32
 #endif
 
-#define PG_LEX_SYNTAX_PARAMS_DEFAULT(Iter) typename std::iterator_traits<Iter>::value_type ESC = '%'
-#define PG_LEX_SYNTAX_PARAMS(Iter) typename std::iterator_traits<Iter>::value_type ESC
-#define PG_LEX_SYNTAX_ARGS(Iter) ESC
+#define PG_LEX_SYNTAX_PARAMS_DEFAULT(Iter) typename Traits = ::pg::lex::pattern_traits<Iter>, typename ::std::iterator_traits<Iter>::value_type ESC = '%'
+#define PG_LEX_SYNTAX_PARAMS(Iter) typename Traits, typename ::std::iterator_traits<Iter>::value_type ESC
+#define PG_LEX_SYNTAX_ARGS(Iter) Traits, ESC
 
 namespace pg
 {
 	namespace lex
 	{
+		template <typename PatIter>
+		struct pattern_traits
+		{
+			using locale_type = std::locale;
+			using char_type = typename std::iterator_traits<PatIter>::value_type;
+
+			locale_type locale;
+
+			template <typename StrIter>
+			struct state
+			{
+				using str_char_type = typename std::iterator_traits<StrIter>::value_type;
+
+				const std::ctype<str_char_type> &ctype;
+
+				state(const pattern_traits &traits) : ctype(std::use_facet<std::ctype<str_char_type>>(traits.locale))
+				{
+
+				}
+
+				bool match_class(str_char_type c, char_type cl) const
+				{
+					std::ctype_base::mask test;
+					bool neg = false;
+					switch(cl)
+					{
+						case 'A':
+							neg = true;
+							PG_LEX_FALLTHROUGH;
+						case 'a':
+							test = std::ctype_base::alpha;
+							break;
+						case 'C':
+							neg = true;
+							PG_LEX_FALLTHROUGH;
+						case 'c':
+							test = std::ctype_base::cntrl;
+							break;
+						case 'D':
+							neg = true;
+							PG_LEX_FALLTHROUGH;
+						case 'd':
+							test = std::ctype_base::digit;
+							break;
+						case 'G':
+							neg = true;
+							PG_LEX_FALLTHROUGH;
+						case 'g':
+							test = std::ctype_base::graph;
+							break;
+						case 'L':
+							neg = true;
+							PG_LEX_FALLTHROUGH;
+						case 'l':
+							test = std::ctype_base::lower;
+							break;
+						case 'P':
+							neg = true;
+							PG_LEX_FALLTHROUGH;
+						case 'p':
+							test = std::ctype_base::punct;
+							break;
+						case 'S':
+							neg = true;
+							PG_LEX_FALLTHROUGH;
+						case 's':
+							test = std::ctype_base::space;
+							break;
+						case 'U':
+							neg = true;
+							PG_LEX_FALLTHROUGH;
+						case 'u':
+							test = std::ctype_base::upper;
+							break;
+						case 'W':
+							neg = true;
+							PG_LEX_FALLTHROUGH;
+						case 'w':
+							test = std::ctype_base::alnum;
+							break;
+						case 'X':
+							neg = true;
+							PG_LEX_FALLTHROUGH;
+						case 'x':
+							test = std::ctype_base::xdigit;
+							break;
+						case 'Z':
+							neg = true;
+							PG_LEX_FALLTHROUGH;
+						case 'z': // Deprecated option
+							return (c == 0) != neg;
+						default:
+							return cl == c;
+					}
+					return ctype.is(test, c) != neg;
+				}
+			};
+
+			template <typename StrIter>
+			state<StrIter> get_state() const &
+			{
+				return state<StrIter>(*this);
+			}
+
+			locale_type imbue(locale_type loc)
+			{
+				std::swap(locale, loc);
+				return loc;
+			}
+		};
+
 		namespace detail
 		{
 			template <typename T>
@@ -553,12 +664,13 @@ namespace pg
 		struct pattern_iter
 		{
 			using char_type = typename std::iterator_traits<Iter>::value_type;
-			using locale_type = std::locale;
+			using locale_type = typename Traits::locale_type;
 
 			Iter end;
 			bool anchor;
 			Iter begin;
-			locale_type locale;
+
+			Traits traits;
 
 			pattern_iter(const Iter begin, const Iter end)
 				: end(end)
@@ -677,8 +789,7 @@ namespace pg
 
 			locale_type imbue(locale_type loc)
 			{
-				std::swap(locale, loc);
-				return loc;
+				return traits.imbue(loc);
 			}
 
 		private:
@@ -798,89 +909,17 @@ namespace pg
 				using pat_char_type = typename std::iterator_traits<PatIter>::value_type;
 
 				const match_state_iter<StrIter, PatIter, PG_LEX_SYNTAX_ARGS(PatIter)> &ms;
-				const std::ctype<str_char_type> &ctype;
+				const typename Traits::template state<StrIter> traits_state;
 
 			public:
-				matcher(const match_state_iter<StrIter, PatIter, PG_LEX_SYNTAX_ARGS(PatIter)> &ms) : ms(ms), ctype(std::use_facet<std::ctype<str_char_type>>(ms.p.locale))
+				matcher(const match_state_iter<StrIter, PatIter, PG_LEX_SYNTAX_ARGS(PatIter)> &ms) : ms(ms), traits_state(ms.p.traits.get_state<StrIter>())
 				{
 				}
 
 			private:
 				bool match_class(str_char_type c, pat_char_type cl) const
 				{
-					std::ctype_base::mask test;
-					bool neg = false;
-					switch(cl)
-					{
-						case 'A':
-							neg = true;
-							PG_LEX_FALLTHROUGH;
-						case 'a':
-							test = std::ctype_base::alpha;
-							break;
-						case 'C':
-							neg = true;
-							PG_LEX_FALLTHROUGH;
-						case 'c':
-							test = std::ctype_base::cntrl;
-							break;
-						case 'D':
-							neg = true;
-							PG_LEX_FALLTHROUGH;
-						case 'd':
-							test = std::ctype_base::digit;
-							break;
-						case 'G':
-							neg = true;
-							PG_LEX_FALLTHROUGH;
-						case 'g':
-							test = std::ctype_base::graph;
-							break;
-						case 'L':
-							neg = true;
-							PG_LEX_FALLTHROUGH;
-						case 'l':
-							test = std::ctype_base::lower;
-							break;
-						case 'P':
-							neg = true;
-							PG_LEX_FALLTHROUGH;
-						case 'p':
-							test = std::ctype_base::punct;
-							break;
-						case 'S':
-							neg = true;
-							PG_LEX_FALLTHROUGH;
-						case 's':
-							test = std::ctype_base::space;
-							break;
-						case 'U':
-							neg = true;
-							PG_LEX_FALLTHROUGH;
-						case 'u':
-							test = std::ctype_base::upper;
-							break;
-						case 'W':
-							neg = true;
-							PG_LEX_FALLTHROUGH;
-						case 'w':
-							test = std::ctype_base::alnum;
-							break;
-						case 'X':
-							neg = true;
-							PG_LEX_FALLTHROUGH;
-						case 'x':
-							test = std::ctype_base::xdigit;
-							break;
-						case 'Z':
-							neg = true;
-							PG_LEX_FALLTHROUGH;
-						case 'z': // Deprecated option
-							return (c == 0) != neg;
-						default:
-							return cl == c;
-					}
-					return ctype.is(test, c) != neg;
+					return traits_state.match_class(c, cl);
 				}
 
 				PatIter find_bracket_class_end(PatIter p) const
