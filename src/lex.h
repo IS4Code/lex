@@ -1109,7 +1109,7 @@ namespace pg
 
 				StrIter matchbalance(StrIter s, PatIter p) const
 				{
-					if(!match_char(*s, *p))
+					if(s == ms.s_end || !match_char(*s, *p))
 					{
 						return ms.s_end;
 					}
@@ -1282,6 +1282,7 @@ namespace pg
 									}
 
 									case 'f': // Frontier?
+									{
 										std::advance(p, 2);
 										bool is_first = s == ms.s_begin && !ms.prev_avail;
 										if(is_first && ms.not_frontier_begin)
@@ -1300,7 +1301,7 @@ namespace pg
 											const str_char_type previous = is_first ? '\0' : *std::prev(s);
 											PatIter ep;
 											bool res;
-											std::tie(ep, res) = matchbracketclass(previous, p) ;
+											std::tie(ep, res) = matchbracketclass(previous, p);
 											if(!res)
 											{
 												assert(*ep == ']');
@@ -1309,6 +1310,7 @@ namespace pg
 											}
 										}
 										return {s, false};
+									}
 
 									case '0': case '1': case '2': case '3': case '4':
 									case '5': case '6': case '7': case '8': case '9': // Capture results (%0-%9)?
