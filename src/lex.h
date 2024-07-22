@@ -70,10 +70,6 @@
 #define PG_LEX_MAXCAPTURES 32
 #endif
 
-#define PG_LEX_SYNTAX_PARAMS_DEFAULT(Iter) typename Traits = ::pg::lex::pattern_traits<Iter>, typename ::std::iterator_traits<Iter>::value_type ESC = '%'
-#define PG_LEX_SYNTAX_PARAMS(Iter) typename Traits, typename ::std::iterator_traits<Iter>::value_type ESC
-#define PG_LEX_SYNTAX_ARGS(Iter) Traits, ESC
-
 namespace pg
 {
 	namespace lex
@@ -83,6 +79,11 @@ namespace pg
 		{
 			using locale_type = std::locale;
 			using char_type = typename std::iterator_traits<PatIter>::value_type;
+
+			enum : char_type
+			{
+				escape_char = '%'
+			};
 
 			locale_type locale;
 
@@ -235,10 +236,10 @@ namespace pg
 			template <typename T>
 			using char_type = typename string_traits<T>::char_type;
 
-			template <typename StrIter, typename PatIter, PG_LEX_SYNTAX_PARAMS(PatIter)>
+			template <typename, typename, typename>
 			struct match_state_iter;
 
-			template <typename StrIter, typename PatIter, PG_LEX_SYNTAX_PARAMS(PatIter)>
+			template <typename, typename, typename>
 			class matcher;
 
 			template<class I1, class I2>
@@ -299,10 +300,10 @@ namespace pg
 			using string_type = std::basic_string<value_type>;
 
 		private:
-			template <typename StrIter, typename PatIter, PG_LEX_SYNTAX_PARAMS(PatIter)>
+			template <typename, typename, typename>
 			friend struct detail::match_state_iter;
 			
-			template <typename StrIter, typename PatIter, PG_LEX_SYNTAX_PARAMS(PatIter)>
+			template <typename, typename, typename>
 			friend class detail::matcher;
 
 			enum : char {
@@ -595,7 +596,7 @@ namespace pg
 			using string_type = typename std::basic_string<char_type>;
 
 		private:
-			template <typename StrIter, typename PatIter, PG_LEX_SYNTAX_PARAMS(PatIter)>
+			template <typename, typename, typename>
 			friend struct detail::match_state_iter;
 
 			std::pair<difference_type, difference_type> pos = { -1, -1 }; // The indices where the match starts and ends
@@ -714,7 +715,7 @@ namespace pg
 		using u16match_result = basic_match_result<char16_t>;
 		using u32match_result = basic_match_result<char32_t>;
 
-		template <typename Iter, PG_LEX_SYNTAX_PARAMS(Iter)>
+		template <typename Iter, typename Traits>
 		struct pattern_iter
 		{
 			using char_type = typename std::iterator_traits<Iter>::value_type;
@@ -776,7 +777,7 @@ namespace pg
 							++q;
 							continue;
 
-						case ESC:
+						case Traits::escape_char:
 							if(++q == end) PG_LEX_UNLIKELY
 							{
 								throw lex_error(pattern_ends_with_percent);
@@ -860,7 +861,7 @@ namespace pg
 					{
 						throw lex_error(pattern_missing_closing_bracket);
 					}
-					else if(*p == ESC)
+					else if(*p == Traits::escape_char)
 					{
 						if(++p == ep) PG_LEX_UNLIKELY // Skip escapes (e.g. '%]')
 						{
@@ -878,8 +879,8 @@ namespace pg
 			}
 		};
 
-		template <class CharT, PG_LEX_SYNTAX_PARAMS_DEFAULT(const CharT*)>
-		struct pattern : public pattern_iter<const CharT*, PG_LEX_SYNTAX_ARGS(const CharT*)>
+		template <class CharT, typename Traits = pattern_traits<const CharT*>>
+		struct pattern : public pattern_iter<const CharT*, Traits>
 		{
 			pattern(const CharT *p) : pattern_iter(p, p + std::char_traits<CharT>::length(p))
 			{
@@ -915,12 +916,12 @@ namespace pg
 			template <typename StrIter, typename PatIter>
 			using common_unsigned_char_iter = typename std::make_unsigned<typename std::common_type<typename std::iterator_traits<StrIter>::value_type, typename std::iterator_traits<PatIter>::value_type>::type>;
 
-			template <typename StrIter, typename PatIter, PG_LEX_SYNTAX_PARAMS(PatIter)>
+			template <typename StrIter, typename PatIter, typename Traits>
 			struct match_state_iter
 			{
 				using difference_type = typename std::iterator_traits<StrIter>::difference_type;
 
-				match_state_iter(StrIter str_begin, StrIter str_end, const pattern_iter<PatIter, PG_LEX_SYNTAX_ARGS(PatIter)> &pat, basic_match_result_iter<StrIter> &mr) noexcept(std::is_nothrow_move_constructible<StrIter>::value && std::is_nothrow_move_constructible<PatIter>::value)
+				match_state_iter(StrIter str_begin, StrIter str_end, const pattern_iter<PatIter, Traits> &pat, basic_match_result_iter<StrIter> &mr) noexcept(std::is_nothrow_move_constructible<StrIter>::value && std::is_nothrow_move_constructible<PatIter>::value)
 					: s_begin(str_begin)
 					, s_end(str_end)
 					, p(pat)
@@ -948,7 +949,7 @@ namespace pg
 
 				StrIter const s_begin;
 				StrIter const s_end;
-				const pattern_iter<PatIter, PG_LEX_SYNTAX_ARGS(PatIter)> &p;
+				const pattern_iter<PatIter, Traits> &p;
 				PatIter const p_end;
 				int matchdepth = PG_LEX_MAXCCALLS; // Control for recursive depth (to avoid stack overflow)
 
@@ -957,20 +958,20 @@ namespace pg
 				std::pair<difference_type, difference_type> &pos;
 			};
 
-			template <typename StrCharT, typename PatCharT, PG_LEX_SYNTAX_PARAMS_DEFAULT(const PatCharT*)>
-			using match_state = match_state_iter<const StrCharT*, const PatCharT*, PG_LEX_SYNTAX_ARGS(const PatCharT*)>;
+			template <typename StrCharT, typename PatCharT, typename Traits = pattern_traits<const PatCharT*>>
+			using match_state = match_state_iter<const StrCharT*, const PatCharT*, Traits>;
 
-			template <typename StrIter, typename PatIter, PG_LEX_SYNTAX_PARAMS(PatIter)>
+			template <typename StrIter, typename PatIter, typename Traits>
 			class matcher
 			{
 				using str_char_type = typename std::iterator_traits<StrIter>::value_type;
 				using pat_char_type = typename std::iterator_traits<PatIter>::value_type;
 
-				const match_state_iter<StrIter, PatIter, PG_LEX_SYNTAX_ARGS(PatIter)> &ms;
+				const match_state_iter<StrIter, PatIter, Traits> &ms;
 				const typename Traits::template state<StrIter> traits_state;
 
 			public:
-				matcher(const match_state_iter<StrIter, PatIter, PG_LEX_SYNTAX_ARGS(PatIter)> &ms) : ms(ms), traits_state(ms.p.traits.get_state<StrIter>())
+				matcher(const match_state_iter<StrIter, PatIter, Traits> &ms) : ms(ms), traits_state(ms.p.traits.get_state<StrIter>())
 				{
 				}
 
@@ -994,7 +995,7 @@ namespace pg
 				{
 					do
 					{
-						if(*p == ESC)
+						if(*p == Traits::escape_char)
 						{
 							std::advance(p, 2);
 						}
@@ -1015,7 +1016,7 @@ namespace pg
 
 					do
 					{
-						if(*p == ESC)
+						if(*p == Traits::escape_char)
 						{
 							++p; // Skip escapes (e.g. '%]')
 							if(match_class(c, *p))
@@ -1056,7 +1057,7 @@ namespace pg
 						case '.':
 							return {std::next(p), not_end}; // Matches any char
 
-						case ESC:
+						case Traits::escape_char:
 							return {std::next(p, 2), not_end && match_class(*s, *std::next(p))};
 
 						case '[':
@@ -1081,7 +1082,7 @@ namespace pg
 						case '.':
 							return true; // Matches any char
 
-						case ESC:
+						case Traits::escape_char:
 							return match_class(c, *std::next(p));
 
 						case '[':
@@ -1251,7 +1252,7 @@ namespace pg
 								}
 								return {s, s == ms.s_end};
 
-							case ESC: // Escaped sequences not in the format class[*+?-]?
+							case Traits::escape_char: // Escaped sequences not in the format class[*+?-]?
 								switch(*std::next(p))
 								{
 									case 'b': // Balanced string?
@@ -1346,10 +1347,10 @@ namespace pg
 				}
 			};
 
-			template <typename StrIter, typename PatIter, PG_LEX_SYNTAX_PARAMS(PatIter)>
-			static pos_result_iter<StrIter> match(const match_state_iter<StrIter, PatIter, PG_LEX_SYNTAX_ARGS(PatIter)> &ms, StrIter s, PatIter p)
+			template <typename StrIter, typename PatIter, typename Traits>
+			static pos_result_iter<StrIter> match(const match_state_iter<StrIter, PatIter, Traits> &ms, StrIter s, PatIter p)
 			{
-				return matcher<StrIter, PatIter, PG_LEX_SYNTAX_ARGS(PatIter)>(ms).match(s, p);
+				return matcher<StrIter, PatIter, Traits>(ms).match(s, p);
 			}
 
 			template <typename CharT>
@@ -1412,12 +1413,12 @@ namespace pg
 			};
 		}
 
-		template <typename StrIter, typename PatIter, PG_LEX_SYNTAX_PARAMS(PatIter)>
-		bool search(StrIter begin, StrIter end, basic_match_result_iter<StrIter> &mr, const pattern_iter<PatIter, PG_LEX_SYNTAX_ARGS(PatIter)> &pattern)
+		template <typename StrIter, typename PatIter, typename Traits>
+		bool search(StrIter begin, StrIter end, basic_match_result_iter<StrIter> &mr, const pattern_iter<PatIter, Traits> &pattern)
 		{
 			using str_char_type = typename std::iterator_traits<StrIter>::value_type;
 
-			detail::match_state_iter<StrIter, PatIter, PG_LEX_SYNTAX_ARGS(PatIter)> ms = { begin, end, pattern, mr };
+			detail::match_state_iter<StrIter, PatIter, Traits> ms = { begin, end, pattern, mr };
 			if(ms.level == 0)
 			{
 				++ms.level;
