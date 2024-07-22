@@ -91,6 +91,8 @@ namespace pg
 			{
 				using str_char_type = typename std::iterator_traits<StrIter>::value_type;
 
+				using uchar_t = typename std::make_unsigned<typename std::common_type<str_char_type, char_type>::type>::type;
+
 				const std::ctype<str_char_type> &ctype;
 
 				state(const pattern_traits &traits) : ctype(std::use_facet<std::ctype<str_char_type>>(traits.locale))
@@ -173,6 +175,18 @@ namespace pg
 							return cl == c;
 					}
 					return ctype.is(test, c) != neg;
+				}
+
+				bool match_range(str_char_type c, char_type min, char_type max) const
+				{
+					return
+						static_cast<uchar_t>(min) <= static_cast<uchar_t>(c) &&
+						static_cast<uchar_t>(c) <= static_cast<uchar_t>(max);
+				}
+
+				bool match_char(str_char_type c, char_type d) const
+				{
+					return static_cast<uchar_t>(c) == static_cast<uchar_t>(d);
 				}
 			};
 
@@ -949,7 +963,6 @@ namespace pg
 			template <typename StrIter, typename PatIter, PG_LEX_SYNTAX_PARAMS(PatIter)>
 			class matcher
 			{
-				using uchar_t = typename common_unsigned_char_iter<StrIter, PatIter>::type;
 				using str_char_type = typename std::iterator_traits<StrIter>::value_type;
 				using pat_char_type = typename std::iterator_traits<PatIter>::value_type;
 
@@ -965,6 +978,16 @@ namespace pg
 				bool match_class(str_char_type c, pat_char_type cl) const
 				{
 					return traits_state.match_class(c, cl);
+				}
+
+				bool match_range(str_char_type c, pat_char_type min, pat_char_type max) const
+				{
+					return traits_state.match_range(c, min, max);
+				}
+
+				bool match_char(str_char_type c, pat_char_type d) const
+				{
+					return traits_state.match_char(c, d);
 				}
 
 				PatIter find_bracket_class_end(PatIter p) const
@@ -983,8 +1006,6 @@ namespace pg
 
 				pos_result_iter<PatIter> matchbracketclass(const str_char_type c, PatIter p) const
 				{
-					const uchar_t uc = static_cast<uchar_t>(c);
-
 					bool ret = true;
 					if(*(++p) == '^')
 					{
@@ -997,7 +1018,7 @@ namespace pg
 						if(*p == ESC)
 						{
 							++p; // Skip escapes (e.g. '%]')
-							if(match_class(uc, *p))
+							if(match_class(c, *p))
 							{
 								return {std::next(p), ret};
 							}
@@ -1007,15 +1028,13 @@ namespace pg
 							PatIter ec = std::next(p, 2);
 							if(*std::next(p) == '-' && ec != ms.p_end && *ec != ']')
 							{
-								const auto min = static_cast<uchar_t>(*p);
-								const auto max = static_cast<uchar_t>(*ec);
-								if(min <= uc && uc <= max)
+								if(match_range(c, *p, *ec))
 								{
 									return {std::next(ec), ret};
 								}
 								p = ec;
 							}
-							else if(static_cast<uchar_t>(*p) == uc)
+							else if(match_char(c, *p))
 							{
 								return {std::next(p), ret};
 							}
@@ -1038,7 +1057,7 @@ namespace pg
 							return {std::next(p), not_end}; // Matches any char
 
 						case ESC:
-							return {std::next(p, 2), not_end && match_class(static_cast<uchar_t>(*s), *std::next(p))};
+							return {std::next(p, 2), not_end && match_class(*s, *std::next(p))};
 
 						case '[':
 							if(not_end)
@@ -1051,7 +1070,7 @@ namespace pg
 							return {find_bracket_class_end(p), false};
 
 						default:
-							return {std::next(p), not_end && static_cast<uchar_t>(*s) == static_cast<uchar_t>(*p)};
+							return {std::next(p), not_end && match_char(*s, *p)};
 					}
 				}
 
@@ -1063,38 +1082,38 @@ namespace pg
 							return true; // Matches any char
 
 						case ESC:
-							return match_class(static_cast<uchar_t>(c), *std::next(p));
+							return match_class(c, *std::next(p));
 
 						case '[':
 							return matchbracketclass(c, p).second;
 
 						default:
-							return static_cast<uchar_t>(*p) == static_cast<uchar_t>(c);
+							return match_char(c, *p);
 					}
 				}
 
 				StrIter matchbalance(StrIter s, PatIter p) const
 				{
-					if(static_cast<uchar_t>(*s) != static_cast<uchar_t>(*p))
+					if(!match_char(*s, *p))
 					{
 						return ms.s_end;
 					}
 					else
 					{
-						const auto b = static_cast<uchar_t>(*p);
-						const auto e = static_cast<uchar_t>(*std::next(p));
+						const auto b = *p;
+						const auto e = *std::next(p);
 						int count = 1;
 						while(++s != ms.s_end)
 						{
-							const auto uc = static_cast<uchar_t>(*s);
-							if(uc == e)
+							const auto c = *s;
+							if(match_char(c, e))
 							{
 								if(--count == 0)
 								{
 									return s;
 								}
 							}
-							else if(uc == b)
+							else if(match_char(c, b))
 							{
 							  ++count;
 							}
