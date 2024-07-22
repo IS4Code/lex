@@ -929,11 +929,14 @@ namespace pg
 			{
 				using difference_type = typename std::iterator_traits<StrIter>::difference_type;
 
-				match_state_iter(StrIter str_begin, StrIter str_end, const pattern_iter<PatIter, Traits> &pat, basic_match_result_iter<StrIter> &mr) noexcept(std::is_nothrow_move_constructible<StrIter>::value && std::is_nothrow_move_constructible<PatIter>::value)
+				match_state_iter(StrIter str_begin, StrIter str_end, const pattern_iter<PatIter, Traits> &pat, basic_match_result_iter<StrIter> &mr, bool prev_avail = false, bool not_frontier_begin = false, bool not_frontier_end = false) noexcept(std::is_nothrow_move_constructible<StrIter>::value && std::is_nothrow_move_constructible<PatIter>::value)
 					: s_begin(str_begin)
 					, s_end(str_end)
 					, p(pat)
 					, p_end(pat.end)
+					, prev_avail(prev_avail)
+					, not_frontier_begin(not_frontier_begin)
+					, not_frontier_end(not_frontier_end)
 					, level(mr.level)
 					, captures(mr.captures)
 					, pos(mr.pos)
@@ -955,10 +958,13 @@ namespace pg
 					captures[level].len(len);
 				}
 
-				StrIter const s_begin;
-				StrIter const s_end;
+				const StrIter s_begin;
+				const StrIter s_end;
 				const pattern_iter<PatIter, Traits> &p;
-				PatIter const p_end;
+				const PatIter p_end;
+				const bool prev_avail : 1;
+				const bool not_frontier_begin : 1;
+				const bool not_frontier_end : 1;
 				int matchdepth = PG_LEX_MAXCCALLS; // Control for recursive depth (to avoid stack overflow)
 
 				int &level; // Total number of captures (finished or unfinished)
@@ -1277,9 +1283,21 @@ namespace pg
 
 									case 'f': // Frontier?
 										std::advance(p, 2);
-										if(matchbracketclass(*s, p).second)
+										bool is_first = s == ms.s_begin && !ms.prev_avail;
+										if(is_first && ms.not_frontier_begin)
 										{
-											const str_char_type previous = (s == ms.s_begin) ? '\0' : *std::prev(s);
+											// frontier should not match beginning
+											return {s, false};
+										}
+										bool is_last = s == ms.s_end;
+										if(is_last && ms.not_frontier_end)
+										{
+											// frontier should not match end
+											return {s, false};
+										}
+										if(matchbracketclass(is_last ? '\0' : *s, p).second)
+										{
+											const str_char_type previous = is_first ? '\0' : *std::prev(s);
 											PatIter ep;
 											bool res;
 											std::tie(ep, res) = matchbracketclass(previous, p) ;
@@ -1422,11 +1440,11 @@ namespace pg
 		}
 
 		template <typename StrIter, typename PatIter, typename Traits>
-		bool search(StrIter begin, StrIter end, basic_match_result_iter<StrIter> &mr, const pattern_iter<PatIter, Traits> &pattern)
+		bool search(StrIter begin, StrIter end, basic_match_result_iter<StrIter> &mr, const pattern_iter<PatIter, Traits> &pattern, bool only_first = false, bool prev_avail = false, bool not_frontier_begin = false, bool not_frontier_end = false)
 		{
 			using str_char_type = typename std::iterator_traits<StrIter>::value_type;
 
-			detail::match_state_iter<StrIter, PatIter, Traits> ms = { begin, end, pattern, mr };
+			detail::match_state_iter<StrIter, PatIter, Traits> ms{begin, end, pattern, mr, prev_avail, not_frontier_begin, not_frontier_end};
 			if(ms.level == 0)
 			{
 				++ms.level;
@@ -1453,7 +1471,7 @@ namespace pg
 					pos = std::next(result.first);
 				}
 			}
-			while(pos != end && !pattern.anchor);
+			while(pos != end && !only_first && !pattern.anchor);
 
 			return false;
 		}
