@@ -23,20 +23,20 @@
 #include "lex.h"
 #include <cctype>
 
-static const char * lex_error_text(pg::lex::error_type code) noexcept
+const char *pg::lex::detail::error_text(pg::lex::error_type code) noexcept
 {
     switch(code)
     {
 		case pg::lex::pattern_too_complex:
 			return "pattern too complex";
 		case pg::lex::pattern_ends_with_percent:
-			return "malformed pattern (ends with '%%')";
+			return "malformed pattern (ends with '%c')";
 		case pg::lex::pattern_missing_closing_bracket:
 			return "malformed pattern (missing ']')";
 		case pg::lex::balanced_no_arguments:
-			return "malformed pattern (missing arguments to '%b')";
+			return "malformed pattern (missing arguments to '%cb')";
 		case pg::lex::frontier_no_open_bracket:
-			return "missing '[' after '%%f' in pattern";
+			return "missing '[' after '%cf' in pattern";
 		case pg::lex::capture_too_many:
 			return "too many captures";
 		case pg::lex::capture_invalid_pattern:
@@ -53,9 +53,3 @@ static const char * lex_error_text(pg::lex::error_type code) noexcept
 			return "lex error";
     }
 }
-
-
-pg::lex::lex_error::lex_error(pg::lex::error_type ec) noexcept
-    : runtime_error(lex_error_text(ec))
-    , error_code(ec)
-{}

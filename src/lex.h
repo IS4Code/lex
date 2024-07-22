@@ -564,19 +564,43 @@ namespace pg
 			percent_invalid_use_in_replacement
 		};
 
+		namespace detail
+		{
+			const char *error_text(pg::lex::error_type code) noexcept;
+		}
+
 		class lex_error : public std::runtime_error
 		{
 			const error_type error_code;
+			const unsigned char esc_char;
 
 		public:
 			lex_error(const std::string&) = delete;
 			lex_error(const char*) = delete;
 
-			lex_error(pg::lex::error_type ec) noexcept;
+			lex_error(pg::lex::error_type ec) noexcept
+				: runtime_error(detail::error_text(ec))
+				, error_code(ec)
+				, esc_char('\0')
+			{
+			}
+
+			template <typename Traits>
+			lex_error(pg::lex::error_type ec, const Traits&) noexcept
+				: runtime_error(detail::error_text(ec))
+				, error_code(ec)
+				, esc_char(Traits::escape_char)
+			{
+			}
 
 			PG_LEX_NODISCARD error_type code() const noexcept
 			{
 				return error_code;
+			}
+
+			PG_LEX_NODISCARD char first_arg() const noexcept
+			{
+				return esc_char;
 			}
 		};
 
@@ -754,7 +778,7 @@ namespace pg
 						case '(':
 							if(capture_level > PG_LEX_MAXCAPTURES) PG_LEX_UNLIKELY
 							{
-								throw lex_error(capture_too_many);
+								throw lex_error(capture_too_many, traits);
 							}
 							captures[capture_level++] = capture_state::unfinished;
 							++q;
@@ -774,7 +798,7 @@ namespace pg
 							}
 							if(level < 0) PG_LEX_UNLIKELY
 							{
-								throw lex_error(capture_invalid_pattern);
+								throw lex_error(capture_invalid_pattern, traits);
 							}
 							++q;
 							++depth;
@@ -788,14 +812,14 @@ namespace pg
 						case Traits::escape_char:
 							if(++q == end) PG_LEX_UNLIKELY
 							{
-								throw lex_error(pattern_ends_with_percent);
+								throw lex_error(pattern_ends_with_percent, traits);
 							}
 							switch(*q)
 							{
 							case 'b':
 								if(std::distance(q, end) < 3) PG_LEX_UNLIKELY
 								{
-									throw lex_error(balanced_no_arguments);
+									throw lex_error(balanced_no_arguments, traits);
 								}
 								std::advance(q, 3);
 								continue;
@@ -803,7 +827,7 @@ namespace pg
 							case 'f':
 								if(++q == end || *q != '[') PG_LEX_UNLIKELY
 								{
-									throw lex_error(frontier_no_open_bracket);
+									throw lex_error(frontier_no_open_bracket, traits);
 								}
 								q = find_bracket_class_end(q, end);
 								continue;
@@ -815,7 +839,7 @@ namespace pg
 									i >= capture_level ||
 									captures[i] != capture_state::finished) PG_LEX_UNLIKELY
 								{
-									throw lex_error(capture_invalid_index);
+									throw lex_error(capture_invalid_index, traits);
 								}
 								++q;
 								continue;
@@ -841,12 +865,12 @@ namespace pg
 				if(std::any_of(captures, captures + capture_level,
 								 [](const auto cap){ return cap != capture_state::finished; })) PG_LEX_UNLIKELY
 				{
-					throw lex_error(capture_not_finished);
+					throw lex_error(capture_not_finished, traits);
 				}
 
 				if(depth > PG_LEX_MAXCCALLS) PG_LEX_UNLIKELY
 				{
-					throw lex_error(pattern_too_complex);
+					throw lex_error(pattern_too_complex, traits);
 				}
 			}
 
@@ -861,23 +885,23 @@ namespace pg
 			}
 
 		private:
-			static Iter find_bracket_class_end(Iter p, Iter ep)
+			Iter find_bracket_class_end(Iter p, Iter ep)
 			{
 				do
 				{
 					if(p == ep) PG_LEX_UNLIKELY
 					{
-						throw lex_error(pattern_missing_closing_bracket);
+						throw lex_error(pattern_missing_closing_bracket, traits);
 					}
 					else if(*p == Traits::escape_char)
 					{
 						if(++p == ep) PG_LEX_UNLIKELY // Skip escapes (e.g. '%]')
 						{
-							throw lex_error(pattern_ends_with_percent);
+							throw lex_error(pattern_ends_with_percent, traits);
 						}
 						if(++p == ep) PG_LEX_UNLIKELY
 						{
-							throw lex_error(pattern_missing_closing_bracket);
+							throw lex_error(pattern_missing_closing_bracket, traits);
 						}
 					}
 				}
