@@ -760,6 +760,8 @@ namespace pg
 
 			Traits traits;
 
+			pattern_iter() = default;
+
 			pattern_iter(const Iter begin, const Iter end)
 				: end(end)
 				, anchor(begin != end && *begin == '^')
@@ -1469,6 +1471,11 @@ namespace pg
 		bool search(StrIter begin, StrIter end, basic_match_result_iter<StrIter> &mr, const pattern_iter<PatIter, Traits> &pattern, bool only_first = false, bool prev_avail = false, bool not_frontier_begin = false, bool not_frontier_end = false)
 		{
 			using str_char_type = typename std::iterator_traits<StrIter>::value_type;
+
+			if(prev_avail && pattern.anchor)
+			{
+				return false;
+			}
 
 			detail::match_state_iter<StrIter, PatIter, Traits> ms{begin, end, pattern, mr, prev_avail, not_frontier_begin, not_frontier_end};
 			if(ms.level == 0)
